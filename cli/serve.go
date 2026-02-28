@@ -137,6 +137,66 @@ func NewServeCommand() *cobra.Command {
 			})
 			http.Handle("/metrics", obs.MetricsHandler())
 
+			// POST /data/chat：数据对话（意图识别 -> DSL -> 执行 -> 结果）
+			dataQueryHandler := buildDataQueryHandler(cfg, debug)
+			http.HandleFunc("/data/chat", func(w http.ResponseWriter, r *http.Request) {
+				if r.Method != http.MethodPost {
+					http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+					return
+				}
+				if dataQueryHandler == nil {
+					http.Error(w, "data query not configured", http.StatusServiceUnavailable)
+					return
+				}
+				requestID := r.Header.Get("X-Request-ID")
+				if requestID == "" {
+					b := make([]byte, 8)
+					if _, err := rand.Read(b); err == nil {
+						requestID = hex.EncodeToString(b)
+					}
+				}
+				var body struct {
+					Message   string `json:"message"`
+					SessionID string `json:"session_id"`
+				}
+				if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+					http.Error(w, errs.ErrBadRequest.Error(), http.StatusBadRequest)
+					return
+				}
+				req := &agent.Request{
+					Messages:  []model.Message{{Role: "user", Content: body.Message}},
+					RequestID: requestID,
+					Metadata:  map[string]any{"session_id": body.SessionID},
+				}
+				if body.SessionID != "" {
+					req.Metadata["session_id"] = body.SessionID
+				}
+				resp, err := dataQueryHandler(context.Background(), req)
+				if err != nil {
+					code, msg := http.StatusInternalServerError, err.Error()
+					if errors.Is(err, errs.ErrBadRequest) {
+						code = http.StatusBadRequest
+					}
+					http.Error(w, msg, code)
+					return
+				}
+				w.Header().Set("Content-Type", "application/json")
+				out := map[string]any{"reply": resp.Text}
+				if resp.Metadata != nil {
+					if rows, ok := resp.Metadata["rows"]; ok {
+						out["data"] = map[string]any{"rows": rows, "columns": resp.Metadata["columns"]}
+					}
+					if confirm, ok := resp.Metadata["confirm_required"]; ok && confirm.(bool) {
+						out["confirm_required"] = true
+						out["confirm_request"] = resp.Metadata["confirm_request"]
+					}
+				}
+				if debug {
+					out["request_id"] = requestID
+				}
+				_ = json.NewEncoder(w).Encode(out)
+			})
+
 			ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 			defer stop()
 
@@ -146,7 +206,7 @@ func NewServeCommand() *cobra.Command {
 				_ = srv.Shutdown(context.Background())
 			}()
 
-			cmd.Printf("Listening on %s (POST /chat, GET /health, GET /metrics)\n", addr)
+			cmd.Printf("Listening on %s (POST /chat, POST /data/chat, GET /health, GET /metrics)\n", addr)
 			if debug {
 				cmd.Println("Debug mode: verbose logs and request_id in response")
 			}
