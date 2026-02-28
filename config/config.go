@@ -8,6 +8,7 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/sath/datasource"
 	yaml "go.yaml.in/yaml/v2"
 )
 
@@ -19,6 +20,10 @@ type Config struct {
 	MaxHistory int `json:"max_history" yaml:"max_history"`
 	// 启用的中间件名称列表，例如 ["logging","metrics","tracing","cache"]。
 	Middlewares []string `json:"middlewares" yaml:"middlewares"`
+	// 数据源列表，用于数据对话（POST /data/chat）。
+	DataSources []datasource.Config `json:"data_sources" yaml:"data_sources"`
+	// 默认数据源 ID，未指定会话数据源时使用。
+	DefaultDatasourceID string `json:"default_datasource_id" yaml:"default_datasource_id"`
 }
 
 // FromEnv 从环境变量加载核心配置。
@@ -93,6 +98,9 @@ func ApplyEnvOverrides(cfg *Config) {
 		if len(list) > 0 {
 			cfg.Middlewares = list
 		}
+	}
+	if v := os.Getenv("DEFAULT_DATASOURCE_ID"); v != "" {
+		cfg.DefaultDatasourceID = v
 	}
 }
 

@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"context"
 	"time"
 
 	"github.com/sath/agent"
@@ -27,6 +28,12 @@ func buildDataQueryHandler(cfg config.Config, debug bool) middleware.Handler {
 	registry := datasource.NewRegistry()
 	datasource.RegisterMySQL(registry)
 	metaStore := metadata.NewInMemoryStore()
+	for _, dsCfg := range cfg.DataSources {
+		if _, err := registry.Register(dsCfg); err != nil {
+			continue
+		}
+		_ = metadata.RefreshFromRegistry(context.Background(), registry, metaStore, dsCfg.ID)
+	}
 	sessionStore := intent.NewInMemoryDataSessionStore()
 	dataAgent := &agent.DataQueryAgent{
 		Recognizer:   &intent.LLMRecognizer{Model: m},
@@ -36,10 +43,11 @@ func buildDataQueryHandler(cfg config.Config, debug bool) middleware.Handler {
 		MetaStore:    metaStore,
 		SessionStore: sessionStore,
 		Config: agent.DataQueryConfig{
-			Timeout:           30 * time.Second,
-			MaxRows:           1000,
-			ReadOnly:          false,
-			ConfirmTimeoutSec: 300,
+			DefaultDatasourceID: cfg.DefaultDatasourceID,
+			Timeout:            30 * time.Second,
+			MaxRows:             1000,
+			ReadOnly:            false,
+			ConfirmTimeoutSec:   300,
 		},
 	}
 	mws := []middleware.Middleware{
