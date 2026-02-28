@@ -5,8 +5,10 @@ import (
 	"time"
 
 	"github.com/sath/agent"
+	"github.com/sath/auth"
 	"github.com/sath/config"
 	"github.com/sath/datasource"
+	"github.com/sath/events"
 	"github.com/sath/dsl"
 	"github.com/sath/executor"
 	"github.com/sath/intent"
@@ -42,6 +44,8 @@ func buildDataQueryHandler(cfg config.Config, debug bool) middleware.Handler {
 		Exec:         &executor.MySQLExecutor{Registry: registry},
 		MetaStore:    metaStore,
 		SessionStore: sessionStore,
+		Checker:      auth.PermissiveChecker,
+		EventBus:     events.DefaultBus(),
 		Config: agent.DataQueryConfig{
 			DefaultDatasourceID: cfg.DefaultDatasourceID,
 			Timeout:            30 * time.Second,

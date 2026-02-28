@@ -7,11 +7,14 @@ import (
 	"strconv"
 	"time"
 
+	"github.com/sath/auth"
 	"github.com/sath/dsl"
 	"github.com/sath/errs"
+	"github.com/sath/events"
 	"github.com/sath/executor"
 	"github.com/sath/intent"
 	"github.com/sath/metadata"
+	"github.com/sath/obs"
 )
 
 // DataQueryConfig 控制 DataQueryAgent 的行为。
@@ -31,6 +34,8 @@ type DataQueryAgent struct {
 	Exec         executor.Executor
 	MetaStore    metadata.Store
 	SessionStore intent.DataSessionStore
+	Checker      auth.Checker
+	EventBus     *events.Bus
 	Config       DataQueryConfig
 }
 
@@ -39,7 +44,17 @@ func (a *DataQueryAgent) Run(ctx context.Context, req *Request) (*Response, erro
 	if req == nil || len(req.Messages) == 0 {
 		return &Response{Text: "请发送一条数据查询或操作请求。"}, nil
 	}
+	userID := getUserID(req)
 	sessionID := getSessionID(req)
+	emit := func(kind events.Kind, payload map[string]any) {
+		if a.EventBus == nil {
+			return
+		}
+		if payload == nil {
+			payload = make(map[string]any)
+		}
+		a.EventBus.Publish(ctx, events.Event{Kind: kind, Payload: payload, RequestID: req.RequestID})
+	}
 	sessCtx, _ := a.SessionStore.Get(sessionID)
 	if sessCtx == nil {
 		sessCtx = &intent.DataSessionContext{}
@@ -64,7 +79,9 @@ func (a *DataQueryAgent) Run(ctx context.Context, req *Request) (*Response, erro
 
 	// 本轮是否为“确认执行”请求
 	if confirmToken, _ := req.Metadata["confirm_token"].(string); confirmToken != "" && sessCtx.PendingConfirmDSL != "" {
-		// 简单策略：有 token 且与待确认 DSL 对应即执行（可改为 token 与 PendingConfirm 绑定校验）
+		if a.Checker != nil && !a.Checker.CanExecute(ctx, userID, dsID, sessCtx.PendingConfirmDSL) {
+			return &Response{Text: "无权限执行该操作。"}, nil
+		}
 		opts := executor.ExecuteOptions{
 			Timeout:  a.Config.Timeout,
 			MaxRows:  a.Config.MaxRows,
@@ -79,6 +96,7 @@ func (a *DataQueryAgent) Run(ctx context.Context, req *Request) (*Response, erro
 		if err != nil {
 			return &Response{Text: "执行失败：" + err.Error()}, nil
 		}
+		emit(events.DataQueryExecuted, map[string]any{"datasource_id": dsID, "intent": string(sessCtx.LastIntent)})
 		text := formatResult(res)
 		return &Response{Text: text}, nil
 	}
@@ -89,10 +107,13 @@ func (a *DataQueryAgent) Run(ctx context.Context, req *Request) (*Response, erro
 		return &Response{Text: "未收到有效消息。"}, nil
 	}
 
+	t0 := time.Now()
 	parsed, err := a.Recognizer.Recognize(ctx, sessionID, req.Messages, meta)
+	obs.ObserveDataQueryIntent(time.Since(t0))
 	if err != nil {
 		return &Response{Text: "意图识别失败：" + err.Error()}, nil
 	}
+	emit(events.DataQueryIntent, map[string]any{"intent": string(parsed.Intent), "table": parsed.Entities.Table})
 	if len(parsed.UncertainFields) > 0 {
 		return &Response{Text: "需要澄清：" + fmt.Sprint(parsed.UncertainFields)}, nil
 	}
@@ -102,7 +123,9 @@ func (a *DataQueryAgent) Run(ctx context.Context, req *Request) (*Response, erro
 		return &Response{Text: text}, nil
 	}
 
+	t1 := time.Now()
 	generatedDSL, params, err := a.Generator.Generate(ctx, parsed, meta)
+	obs.ObserveDataQueryDSL(time.Since(t1))
 	if err != nil {
 		return &Response{Text: "生成语句失败：" + err.Error()}, nil
 	}
@@ -130,25 +153,41 @@ func (a *DataQueryAgent) Run(ctx context.Context, req *Request) (*Response, erro
 		return resp, nil
 	}
 
+	if a.Checker != nil && !a.Checker.CanExecute(ctx, userID, dsID, generatedDSL) {
+		return &Response{Text: "无权限执行该操作。"}, nil
+	}
 	opts := executor.ExecuteOptions{
 		Timeout:  a.Config.Timeout,
 		MaxRows:  a.Config.MaxRows,
 		ReadOnly: a.Config.ReadOnly,
 		Params:   params,
 	}
+	t2 := time.Now()
 	res, err := a.Exec.Execute(ctx, dsID, generatedDSL, opts)
+	obs.ObserveDataQueryExec(map[bool]string{true: "ok", false: "error"}[err == nil], time.Since(t2))
 	if err != nil {
 		if errors.Is(err, errs.ErrBadRequest) {
 			return &Response{Text: "请求不合法：" + res.Error}, nil
 		}
 		return &Response{Text: "执行失败：" + err.Error()}, nil
 	}
+	emit(events.DataQueryExecuted, map[string]any{"datasource_id": dsID, "intent": string(parsed.Intent)})
 	text := formatResult(res)
 	sessCtx.LastDSL = generatedDSL
 	sessCtx.LastTable = parsed.Entities.Table
 	sessCtx.LastIntent = parsed.Intent
 	a.SessionStore.Set(sessionID, sessCtx)
 	return &Response{Text: text, Metadata: map[string]any{"rows": res.Rows, "columns": res.Columns}}, nil
+}
+
+func getUserID(req *Request) string {
+	if req == nil || req.Metadata == nil {
+		return ""
+	}
+	if s, ok := req.Metadata["user_id"].(string); ok {
+		return s
+	}
+	return ""
 }
 
 func getSessionID(req *Request) string {

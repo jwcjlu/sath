@@ -21,6 +21,11 @@ const (
 	RunCompleted Kind = "agent.run.completed"
 	// RunError 表示 Run 过程中发生错误。
 	RunError Kind = "agent.run.error"
+
+	// DataQueryIntent 表示数据对话意图识别完成。
+	DataQueryIntent Kind = "dataquery.intent"
+	// DataQueryExecuted 表示数据对话 DSL 已执行。
+	DataQueryExecuted Kind = "dataquery.executed"
 )
 
 // Event 表示一条生命周期事件，用于日志、审计、指标等扩展。
