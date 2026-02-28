@@ -1,6 +1,11 @@
 package metadata
 
-import "context"
+import (
+	"context"
+	"errors"
+)
+
+var ErrUnsupportedDataSource = errors.New("metadata: unsupported datasource type for schema fetch")
 
 // FetchFunc 由调用方提供，用于在 Refresh 时拉取某数据源的 Schema。
 type FetchFunc func() (*Schema, error)
