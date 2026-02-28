@@ -21,6 +21,11 @@ type MySQLDataSource struct {
 	db *sql.DB
 }
 
+// NewMySQLDataSourceFromDB 用于测试或已有 *sql.DB 时构造 MySQLDataSource，不管理 db 生命周期。
+func NewMySQLDataSourceFromDB(id string, db *sql.DB) *MySQLDataSource {
+	return &MySQLDataSource{id: id, db: db}
+}
+
 // ID 实现 DataSource。
 func (m *MySQLDataSource) ID() string { return m.id }
 
