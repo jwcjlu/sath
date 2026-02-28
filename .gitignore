@@ -1,0 +1,86 @@
+# IDE & Editor
+.idea/
+.vscode/
+.cursor/
+*.swp
+*.swo
+*~
+.project
+.settings/
+*.sublime-*
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Run / Debug
+.run/
+__debug_bin*
+/**/__debug_*
+/**/local
+/**/bin
+
+# --- Go ---
+# Build artifacts
+*.exe
+*.exe~
+*.test
+*.out
+/bin/
+/dist/
+
+# CGO
+*.dll
+*.so
+*.dylib
+
+# Vendor (if not committed)
+vendor/
+
+# Coverage
+coverage.out
+coverage.html
+*.coverprofile
+
+# Generated (uncomment if used)
+# *.pb.go
+# *.validate.go
+
+# --- Project / Legacy ---
+/libs/
+/sdk/log/
+/api/protos/**/*.pb.go
+
+# --- Logs & Temp ---
+*.log
+*.log.gz
+test.log
+logs/
+/tmp/
+*.tmp
+*.temp
+
+# --- Secrets & Local Config ---
+.env
+.env.local
+.env.*.local
+*.local.yaml
+*.local.yml
+
+# --- AI / Tooling ---
+.cursorignore
+.claude/
+.claude
+CLAUDE.md
+ARCHITECTURE_PATTERNS.md
+.ai-rules
+.trae
+.qoder
+
+# --- Other ---
+# go.sum  # 通常保留以锁定依赖；若私有仓库不提交可取消注释
+# openapi.yaml  # 若为生成物可取消注释
+
+# Gradle (legacy, if unused can delete)
+.gradle/
+build/
