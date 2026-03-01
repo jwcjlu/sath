@@ -92,7 +92,16 @@ func (c *OpenAIClient) ChatWithTools(ctx context.Context, messages []Message, re
 
 	result, err := tl.Execute(ctx, params)
 	if err != nil {
-		return nil, fmt.Errorf("execute tool %s: %w", tl.Name, err)
+		// 将工具错误作为观察结果返回，而非让整次请求失败，以便 ReAct 可继续循环、模型根据错误决定下一步（如先 describe_table 再重试）。
+		errMsg := err.Error()
+		return &Generation{
+			Text: "error: " + errMsg,
+			Raw: ToolStep{
+				Used:        true,
+				ToolName:    tl.Name,
+				Observation: map[string]string{"error": errMsg},
+			},
+		}, nil
 	}
 
 	// 简化：直接将工具执行结果转成文本（JSON）返回。

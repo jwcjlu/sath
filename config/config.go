@@ -8,6 +8,7 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/sath/datasource"
 	yaml "go.yaml.in/yaml/v2"
 )
 
@@ -19,6 +20,13 @@ type Config struct {
 	MaxHistory int `json:"max_history" yaml:"max_history"`
 	// 启用的中间件名称列表，例如 ["logging","metrics","tracing","cache"]。
 	Middlewares []string `json:"middlewares" yaml:"middlewares"`
+
+	// DataSources 定义可用于数据查询 Agent 的数据源列表（可为空）。
+	DataSources []datasource.Config `json:"data_sources" yaml:"data_sources"`
+	// DefaultDatasourceID 为数据查询 Agent 默认使用的数据源 ID（可被请求覆盖）。
+	DefaultDatasourceID string `json:"default_datasource_id" yaml:"default_datasource_id"`
+	// DataAllowWrite 控制数据查询 Agent 是否允许写/改；为 false 时仅启用只读工具。
+	DataAllowWrite bool `json:"data_allow_write" yaml:"data_allow_write"`
 }
 
 // FromEnv 从环境变量加载核心配置。
@@ -93,6 +101,13 @@ func ApplyEnvOverrides(cfg *Config) {
 		if len(list) > 0 {
 			cfg.Middlewares = list
 		}
+	}
+	if v := os.Getenv("DEFAULT_DATASOURCE_ID"); v != "" {
+		cfg.DefaultDatasourceID = v
+	}
+	if v := os.Getenv("DATA_ALLOW_WRITE"); v != "" {
+		lower := strings.ToLower(strings.TrimSpace(v))
+		cfg.DataAllowWrite = lower == "1" || lower == "true" || lower == "yes"
 	}
 }
 

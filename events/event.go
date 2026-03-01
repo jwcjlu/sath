@@ -21,6 +21,11 @@ const (
 	RunCompleted Kind = "agent.run.completed"
 	// RunError 表示 Run 过程中发生错误。
 	RunError Kind = "agent.run.error"
+
+	// DataQueryWriteProposed 表示一次数据写/改已被提议（尚未执行），等待用户确认。
+	DataQueryWriteProposed Kind = "dataquery.write.proposed"
+	// DataQueryWriteExecuted 表示一次数据写/改已实际执行（成功或失败），用于审计。
+	DataQueryWriteExecuted Kind = "dataquery.write.executed"
 )
 
 // Event 表示一条生命周期事件，用于日志、审计、指标等扩展。

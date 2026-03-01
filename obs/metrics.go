@@ -31,12 +31,31 @@ var (
 		},
 		[]string{"agent", "type"}, // type: "input" | "output"
 	)
+
+	// dataqueryToolCalls 统计数据查询相关工具被调用的次数及成功/失败情况。
+	dataqueryToolCalls = prometheus.NewCounterVec(
+		prometheus.CounterOpts{
+			Name: "dataquery_tool_calls_total",
+			Help: "Total number of data query tool calls.",
+		},
+		[]string{"tool", "status"},
+	)
+
+	// dataqueryStepDuration 统计数据查询链路中关键步骤的耗时（如 react_run）。
+	dataqueryStepDuration = prometheus.NewHistogramVec(
+		prometheus.HistogramOpts{
+			Name:    "dataquery_step_duration_seconds",
+			Help:    "Duration of data query steps.",
+			Buckets: prometheus.DefBuckets,
+		},
+		[]string{"step"},
+	)
 )
 
 var reg = prometheus.NewRegistry()
 
 func init() {
-	reg.MustRegister(requests, requestDuration, tokensTotal)
+	reg.MustRegister(requests, requestDuration, tokensTotal, dataqueryToolCalls, dataqueryStepDuration)
 }
 
 // MetricsHandler 返回 Prometheus HTTP handler，可挂载到 /metrics。
@@ -68,4 +87,26 @@ func ObserveTokenUsage(agentName string, inputTokens, outputTokens int) {
 	if outputTokens > 0 {
 		tokensTotal.WithLabelValues(agentName, "output").Add(float64(outputTokens))
 	}
+}
+
+// ObserveDataQueryTool 记录一次数据查询工具调用。
+// toolName 如 "list_tables"、"describe_table"、"execute_read"、"execute_write"；status 一般为 "ok" 或 "error"。
+func ObserveDataQueryTool(toolName, status string, d time.Duration) {
+	if toolName == "" {
+		toolName = "unknown"
+	}
+	if status == "" {
+		status = "ok"
+	}
+	dataqueryToolCalls.WithLabelValues(toolName, status).Inc()
+	dataqueryStepDuration.WithLabelValues("tool_" + toolName).Observe(d.Seconds())
+}
+
+// ObserveDataQueryStep 记录数据查询链路中任意自定义步骤的耗时。
+// 例如 step="react_run"、"confirm_write" 等。
+func ObserveDataQueryStep(step string, d time.Duration) {
+	if step == "" {
+		step = "unknown"
+	}
+	dataqueryStepDuration.WithLabelValues(step).Observe(d.Seconds())
 }
