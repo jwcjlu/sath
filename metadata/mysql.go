@@ -87,21 +87,25 @@ ORDER BY t.table_name, c.ordinal_position
 	return schema, nil
 }
 
-// RefreshFromRegistry 通过 datasource.Registry 找到指定数据源，
-// 要求其实现 dbProvider 接口，从而拉取并刷新内存 Store。
+// RefreshFromRegistry 通过 datasource.Registry 找到指定数据源并刷新内存 Store。
+// 支持 MySQL（dbProvider）与 Elasticsearch（datasource.ESClientProvider）。
 func RefreshFromRegistry(ctx context.Context, reg *datasource.Registry, store *InMemoryStore, datasourceID string) (*Schema, error) {
 	ds, err := reg.Get(datasourceID)
 	if err != nil {
 		return nil, err
 	}
 
-	provider, ok := ds.(dbProvider)
-	if !ok {
-		return nil, ErrUnsupportedDataSource
+	if provider, ok := ds.(dbProvider); ok {
+		store.fetch = func(ctx context.Context) (*Schema, error) {
+			return FetchSchema(ctx, provider.DB())
+		}
+		return store.Refresh(ctx)
 	}
-
-	store.fetch = func(ctx context.Context) (*Schema, error) {
-		return FetchSchema(ctx, provider.DB())
+	if ep, ok := ds.(datasource.ESClientProvider); ok {
+		store.fetch = func(ctx context.Context) (*Schema, error) {
+			return FetchSchemaElasticsearch(ctx, ep.ESClient())
+		}
+		return store.Refresh(ctx)
 	}
-	return store.Refresh(ctx)
+	return nil, ErrUnsupportedDataSource
 }

@@ -17,6 +17,144 @@ import (
 	"github.com/sath/tool"
 )
 
+// 数据查询工具名，与 tool 包注册名一致。
+const (
+	ToolListTables    = "list_tables"
+	ToolDescribeTable = "describe_table"
+	ToolExecuteRead   = "execute_read"
+	ToolExecuteWrite  = "execute_write"
+)
+
+// DefaultToolCapabilitiesByType 按数据源类型声明支持的工具列表；未注册描述符时回退用。
+var DefaultToolCapabilitiesByType = map[string][]string{
+	"mysql":         {ToolListTables, ToolDescribeTable, ToolExecuteRead, ToolExecuteWrite},
+	"elasticsearch": {ToolListTables, ToolDescribeTable, ToolExecuteRead},
+}
+
+// ToolDef 描述符中单工具定义：Name 与 tool 包注册名一致，Description 为空则使用 tool 包默认。
+type ToolDef struct {
+	Name        string
+	Description string
+}
+
+// TypeDescriptor 数据源类型描述符：工具能力与类型相关提示片段，单一事实来源。
+type TypeDescriptor struct {
+	Type   string
+	Tools  []ToolDef
+	Prompt struct {
+		Intro         string // 类型相关首段
+		ToolSummaries string // 可用工具与用途（仅只读三件套 + 占位；execute_write 由公共逻辑按 AllowWrite 追加）
+		Workflow      string // 推荐工作流（探索→计划→只读→解读；写/改由公共逻辑追加）
+		Examples      string // 示例场景（列举/结构/只读；写改由公共逻辑追加）
+	}
+}
+
+var typeDescriptors = make(map[string]*TypeDescriptor)
+
+func init() {
+	registerTypeDescriptor(mysqlDescriptor())
+	registerTypeDescriptor(elasticsearchDescriptor())
+}
+
+func registerTypeDescriptor(d *TypeDescriptor) {
+	if d != nil && d.Type != "" {
+		typeDescriptors[d.Type] = d
+	}
+}
+
+// GetDescriptor 返回数据源类型对应的描述符，未注册时返回默认（mysql）。
+func GetDescriptor(datasourceType string) *TypeDescriptor {
+	if datasourceType == "es" {
+		datasourceType = "elasticsearch"
+	}
+	if d, ok := typeDescriptors[datasourceType]; ok {
+		return d
+	}
+	return typeDescriptors["mysql"]
+}
+
+func mysqlDescriptor() *TypeDescriptor {
+	return &TypeDescriptor{
+		Type: "mysql",
+		Tools: []ToolDef{
+			{Name: ToolListTables, Description: "List tables (or collections) in the current datasource. Returns table names and optional comments."},
+			{Name: ToolDescribeTable, Description: "Describe table structure in the current datasource. Returns columns with type and nullability."},
+			{Name: ToolExecuteRead, Description: "Execute a read-only DSL (e.g. SQL SELECT) on the current datasource and return rows."},
+			{Name: ToolExecuteWrite, Description: "Propose and confirm write/change DSL with permission check and confirmation token."},
+		},
+		Prompt: struct {
+			Intro         string
+			ToolSummaries string
+			Workflow      string
+			Examples      string
+		}{
+			Intro: "你是一个安全可靠的数据查询助手，负责通过工具访问 mysql 数据源，帮助用户用自然语言完成数据的「列举、结构查看、只读查询，以及在允许时的写/改」任务。\n\n",
+			ToolSummaries: "- list_tables：列举当前数据源中的表/集合及简要说明；可选传 keyword 参数按关键词模糊过滤表名。\n" +
+				"- describe_table：查看某张表的列、类型、含义，用于在编写查询前理解结构。\n" +
+				"- execute_read：执行只读查询（通常是 SELECT），返回表格结果，适合统计、明细查询等。\n",
+			Workflow: "1. 探索阶段：当用户第一次接入或你不了解库结构时，先使用 list_tables 获取有哪些业务表，再根据需要对关键表使用 describe_table。\n" +
+				"2. 计划阶段：根据用户问题和表结构，在「思考」中用自然语言说明你打算查询哪些表、使用哪些条件与聚合字段。\n" +
+				"3. 只读查询阶段：\n" +
+				"   - 使用 execute_read 执行 SELECT 语句；优先返回汇总后的结果（如总数、汇总金额），必要时再补充明细。\n" +
+				"   - 查询前应简要描述你即将执行的查询意图（不需要向用户展示 SQL，仅在思考中自我说明）。\n",
+			Examples: "1. 列举表：\n" +
+				"   - 用户：\"这个库里有哪些和订单相关的表？\"\n" +
+				"   - 你：调用 list_tables，筛选名称或注释中包含「order」的表，然后用自然语言总结。\n" +
+				"2. 查看结构：\n" +
+				"   - 用户：\"帮我看看订单表的字段。\"\n" +
+				"   - 你：调用 describe_table（如 table_name=\"orders\"），并解释关键字段（如订单状态、金额、时间）。\n" +
+				"3. 只读查询：\n" +
+				"   - 用户：\"统计本月每个渠道的订单数和金额。\"\n" +
+				"   - 你：在思考中说明将使用 orders 表、按渠道与月份分组统计，然后通过 execute_read 执行 SELECT，最后用中文总结结果。\n",
+		},
+	}
+}
+
+func elasticsearchDescriptor() *TypeDescriptor {
+	return &TypeDescriptor{
+		Type: "elasticsearch",
+		Tools: []ToolDef{
+			{Name: ToolListTables, Description: "List indices in the current Elasticsearch datasource. Optional keyword: filter to indices whose name contains the keyword (fuzzy search). Returns index names and optional comments."},
+			{Name: ToolDescribeTable, Description: "Describe index mapping (fields and types) in the current datasource."},
+			{Name: ToolExecuteRead, Description: "Execute a read-only query: request body must be {\"query\":{...}} (e.g. {\"query\":{\"ids\":{\"values\":[\"id1\"]}}}). Optional index: target index or pattern. For _id lookup use ids or term query, not match."},
+			// execute_write 不在 ES 默认能力列表，描述符中不包含；若未来开放则与 mysql 一致即可
+		},
+		Prompt: struct {
+			Intro         string
+			ToolSummaries string
+			Workflow      string
+			Examples      string
+		}{
+			Intro: "你是一个安全可靠的数据查询助手，负责通过工具访问 Elasticsearch 数据源，帮助用户用自然语言完成数据的「列举、结构查看、只读查询，以及在允许时的写/改」任务。\n\n",
+			ToolSummaries: "- list_tables：列举的是**逻辑表（索引模式）**，如 vm-manager-* 表示同一模式的多个日期索引聚合；可选 keyword 模糊过滤。\n" +
+				"- describe_table：入参可为模式名（如 vm-manager-*）或具体索引名；返回 mapping 与 Comment 中的**时间约定**（按日滚动时查某日数据应用对应索引或 pattern）。\n" +
+				"- execute_read：传入 **Search 请求体**，必须是 **{\"query\":{...}}** 包裹（如 {\"query\":{\"ids\":{\"values\":[\"id1\"]}}} 或 {\"query\":{\"term\":{\"_id\":\"id1\"}}}），不能只传 {\"ids\":...}。可选 index 参数指定目标索引或 pattern。按 _id 查用 ids/term，不要用 match。\n",
+			Workflow: "1. 探索阶段：用 list_tables 看逻辑表（索引模式），用 describe_table 看某模式或具体索引的 mapping 与时间约定。\n" +
+				"2. 计划阶段：根据用户问题与 mapping，决定查哪个索引或 pattern；**时间序列查询需根据时间选索引**（见 describe_table 的 Comment）。\n" +
+				"3. 只读查询阶段：\n" +
+				"   - 使用 execute_read，必要时传 **index** 参数指定目标索引或 pattern；body 为 {\"query\":{...}} 的 Search 请求体（可按业务字段用 match、range、aggs 等；**仅当按文档 _id 精确查时**用 ids 或 term，勿用 match）。优先返回汇总再补充明细。\n" +
+				"   - **形如 数字_字母数字 的值**（如 4103_3mrtug0l92h7）且用户未明确说「字段 M」或「列 M」时，视为**文档 _id**，用 {\"query\":{\"ids\":{\"values\":[\"该值\"]}}} 或 {\"query\":{\"term\":{\"_id\":\"该值\"}}}，**不要**用 {\"term\":{\"M\":\"该值\"}}。\n" +
+				"   - 若首次查询因索引名错误（如用了 backend-vm_manager 而应为 backend-vm_manager-*）或 query 用错未命中，**应修正 index 与 query 后再次调用 execute_read**，不要仅用文字说明「请用 xxx」就结束；直到拿到工具返回结果再回复用户。\n" +
+				"   - 查询前在思考中说明目标索引与意图。\n",
+			Examples: "1. 列举索引：\n" +
+				"   - 用户：\"有哪些索引？\"\n" +
+				"   - 你：调用 list_tables，然后用自然语言总结索引名称与用途。\n" +
+				"2. 查看 mapping：\n" +
+				"   - 用户：\"帮我看看 logs 索引的字段。\"\n" +
+				"   - 你：调用 describe_table（table_name=\"logs\"），并解释关键字段类型与含义。\n" +
+				"3. 只读查询：\n" +
+				"   - 用户：\"查一下 logs 里最近 10 条。\"\n" +
+				"   - 你：在思考中说明将查询 logs 索引、size=10，然后通过 execute_read 传入 Search 请求体 JSON（如 {\"size\":10,\"query\":{\"match_all\":{}}}），最后用中文总结结果。\n" +
+				"4. 按业务字段查询（如字段 M）：\n" +
+				"   - 用户：\"查 backend-vm_manager 里 M 为 4103 的记录。\"\n" +
+				"   - 你：传 index=backend-vm_manager-*（或具体日期索引），body 为 {\"query\":{\"term\":{\"M\":\"4103\"}}}，返回并总结。这是**业务字段 M**，不是文档 _id。\n" +
+				"5. 按文档 _id 查询（勿与字段 M 混淆）：\n" +
+				"   - 用户：\"查 id 为 4103_3mrtug0l92h7 的记录\" 或只给出一串 4103_3mrtug0l92h7。\n" +
+				"   - 你：传 index=backend-vm_manager-*，body 为 {\"query\":{\"ids\":{\"values\":[\"4103_3mrtug0l92h7\"]}}} 或 {\"query\":{\"term\":{\"_id\":\"4103_3mrtug0l92h7\"}}}，**不要**用 term 查字段 M。若首次未传 index 或索引名写错，修正后再次调用 execute_read 再回复。\n",
+		},
+	}
+}
+
 // DataQueryPromptConfig 配置数据查询 Agent 的系统提示。
 type DataQueryPromptConfig struct {
 	// DatasourceType 如 "mysql"、"postgres"。仅用于文案描述。
@@ -25,19 +163,19 @@ type DataQueryPromptConfig struct {
 	AllowWrite bool
 }
 
-// BuildDataQuerySystemPrompt 构造数据查询 Agent 的系统级提示，指导模型按 ReAct + 工具调用方式工作。
-// 该提示应作为首条 system message 注入对话。
+// BuildDataQuerySystemPrompt 构造数据查询 Agent 的系统级提示，由类型描述符驱动，无按类型 if/else。
 func BuildDataQuerySystemPrompt(cfg DataQueryPromptConfig) string {
 	ds := cfg.DatasourceType
 	if ds == "" {
-		ds = "SQL"
+		ds = "mysql"
 	}
+	desc := GetDescriptor(ds)
+
 	var b strings.Builder
-	fmt.Fprintf(&b, "你是一个安全可靠的数据查询助手，负责通过工具访问 %s 数据源，", ds)
-	b.WriteString("帮助用户用自然语言完成数据的「列举、结构查看、只读查询，以及在允许时的写/改」任务。\n\n")
+	b.WriteString(desc.Prompt.Intro)
 
 	b.WriteString("【总体原则】\n")
-	b.WriteString("1. 严格遵守只读/写改边界：除非明确允许写/改且用户有强烈意图，否则不要修改数据；永远不要直接编造查询结果。\n")
+	b.WriteString("1. 严格遵守只读/写改边界：除非明确允许写/改且用户有强烈意图，否则不要修改数据；**严禁编造、臆造或假设任何查询结果**：仅能依据工具返回的真实数据回答，工具返回空即明确告知「未查到数据」。\n")
 	if !cfg.AllowWrite {
 		b.WriteString("2. 当前运行在「只读模式」，你**禁止调用**任何会修改数据的工具（如 execute_write）。若用户请求写/改，请解释当前仅支持查询，并给出只读替代方案。\n")
 	} else {
@@ -46,9 +184,7 @@ func BuildDataQuerySystemPrompt(cfg DataQueryPromptConfig) string {
 	b.WriteString("3. 始终用简洁的中文回答用户，必要时在结果后面补充简短的业务含义解释。\n\n")
 
 	b.WriteString("【可用工具与用途】\n")
-	b.WriteString("- list_tables：列举当前数据源中的所有表/集合及简要说明，用于熟悉数据对象。\n")
-	b.WriteString("- describe_table：查看某张表的列、类型、含义，用于在编写查询前理解结构。\n")
-	b.WriteString("- execute_read：执行只读查询（通常是 SELECT），返回表格结果，适合统计、明细查询等。\n")
+	b.WriteString(desc.Prompt.ToolSummaries)
 	if cfg.AllowWrite {
 		b.WriteString("- execute_write：用于 INSERT/UPDATE/DELETE 等写/改操作，只能在用户已经明确确认且你持有有效 confirm_token 时使用。\n")
 	} else {
@@ -57,11 +193,7 @@ func BuildDataQuerySystemPrompt(cfg DataQueryPromptConfig) string {
 	b.WriteString("\n")
 
 	b.WriteString("【推荐工作流（ReAct 思考→行动→观察）】\n")
-	b.WriteString("1. 探索阶段：当用户第一次接入或你不了解库结构时，先使用 list_tables 获取有哪些业务表，再根据需要对关键表使用 describe_table。\n")
-	b.WriteString("2. 计划阶段：根据用户问题和表结构，在「思考」中用自然语言说明你打算查询哪些表、使用哪些条件与聚合字段。\n")
-	b.WriteString("3. 只读查询阶段：\n")
-	b.WriteString("   - 使用 execute_read 执行 SELECT 语句；优先返回汇总后的结果（如总数、汇总金额），必要时再补充明细。\n")
-	b.WriteString("   - 查询前应简要描述你即将执行的查询意图（不需要向用户展示 SQL，仅在思考中自我说明）。\n")
+	b.WriteString(desc.Prompt.Workflow)
 	if cfg.AllowWrite {
 		b.WriteString("4. 写/改提议阶段（仅在用户明确要求修改数据时）：\n")
 		b.WriteString("   - 首先在「思考」中确认用户的真实意图、影响范围和风险；如有歧义，先向用户再确认。\n")
@@ -81,18 +213,11 @@ func BuildDataQuerySystemPrompt(cfg DataQueryPromptConfig) string {
 	} else {
 		b.WriteString("3. 当用户请求写/改时，请说明当前仅支持只读查询，并可给出如何通过查询来验证或评估的建议。\n")
 	}
-	b.WriteString("4. 若查询结果为空或不确定，请直接说明，并给出可能的原因或下一步排查建议。\n\n")
+	b.WriteString("4. **若工具返回的结果为空（0 条）**：必须明确告知用户「未查到数据」或「当前无匹配结果」，不得编造、臆造或假设任何一条记录或字段内容；可简要说明可能原因（如条件过严、索引/表名错误）或建议下一步（如先 list_tables/describe_table 再重试）。\n")
+	b.WriteString("5. 若查询结果非空但你不确定含义，请直接说明，并给出可能的原因或下一步排查建议。\n\n")
 
 	b.WriteString("【示例场景】\n")
-	b.WriteString("1. 列举表：\n")
-	b.WriteString("   - 用户：\"这个库里有哪些和订单相关的表？\"\n")
-	b.WriteString("   - 你：调用 list_tables，筛选名称或注释中包含「order」的表，然后用自然语言总结。\n")
-	b.WriteString("2. 查看结构：\n")
-	b.WriteString("   - 用户：\"帮我看看订单表的字段。\"\n")
-	b.WriteString("   - 你：调用 describe_table（如 table_name=\"orders\"），并解释关键字段（如订单状态、金额、时间）。\n")
-	b.WriteString("3. 只读查询：\n")
-	b.WriteString("   - 用户：\"统计本月每个渠道的订单数和金额。\"\n")
-	b.WriteString("   - 你：在思考中说明将使用 orders 表、按渠道与月份分组统计，然后通过 execute_read 执行 SELECT，最后用中文总结结果。\n")
+	b.WriteString(desc.Prompt.Examples)
 	if cfg.AllowWrite {
 		b.WriteString("4. 写/改带确认：\n")
 		b.WriteString("   - 用户：\"把昨天所有测试环境的订单状态改为已取消。\"\n")
@@ -119,6 +244,10 @@ type DataQueryConfig struct {
 
 	// 默认数据源 ID（可选，优先级低于请求 Metadata 中的 datasource_id）。
 	DefaultDatasourceID string
+	// DatasourceTypes 可选：datasource_id -> type（如 "mysql"、"elasticsearch"），用于按请求数据源生成对应系统提示与能力列表。
+	DatasourceTypes map[string]string
+	// ToolCapabilitiesByType 可选：datasource_type -> 支持的工具名列表；为 nil 时使用 DefaultToolCapabilitiesByType。
+	ToolCapabilitiesByType map[string][]string
 	// 是否允许写/改；为 false 时不会注册 execute_write 工具。
 	AllowWrite bool
 
@@ -159,20 +288,23 @@ func NewDataQueryHandlerFromConfig(cfg config.Config, middlewareByName map[strin
 		}
 	}
 
-	// 构建数据源 Registry（当前只支持 mysql 类型）。
+	// 构建数据源 Registry（支持 mysql、elasticsearch 类型）。
 	dsReg := datasource.NewRegistry()
 	datasource.RegisterMySQL(dsReg)
+	datasource.RegisterElasticsearch(dsReg)
+	idToType := make(map[string]string)
 	for _, ds := range cfg.DataSources {
 		if ds.Type == "" {
 			ds.Type = "mysql"
 		}
+		idToType[ds.ID] = ds.Type
 		if _, err := dsReg.Register(ds); err != nil {
 			return nil, fmt.Errorf("dataquery: register datasource %s: %w", ds.ID, err)
 		}
 	}
 
 	store := metadata.NewInMemoryStore(nil)
-	exec := executor.NewMySQLExecutor(dsReg)
+	exec := executor.NewMultiExecutor(dsReg, executor.NewMySQLExecutor(dsReg), executor.NewESExecutor(dsReg))
 
 	dqCfg := DataQueryConfig{
 		DatasourceRegistry:     dsReg,
@@ -180,6 +312,7 @@ func NewDataQueryHandlerFromConfig(cfg config.Config, middlewareByName map[strin
 		Exec:                   exec,
 		Checker:                auth.PermissiveChecker{},
 		DefaultDatasourceID:    cfg.DefaultDatasourceID,
+		DatasourceTypes:        idToType,
 		AllowWrite:             cfg.DataAllowWrite,
 		MaxReActSteps:          4,
 		DefaultReadTimeoutSec:  0,
@@ -191,69 +324,76 @@ func NewDataQueryHandlerFromConfig(cfg config.Config, middlewareByName map[strin
 	return NewDataQueryHandler(m, mem, dqCfg, mws...), nil
 }
 
+// registerDataQueryTools 按类型描述符将工具注册到 reg，描述符中带 Description 的会覆盖 tool 包默认描述。
+func registerDataQueryTools(reg *tool.Registry, cfg DataQueryConfig, desc *TypeDescriptor) {
+	if reg == nil || desc == nil {
+		return
+	}
+	for _, td := range desc.Tools {
+		if td.Name == ToolExecuteWrite && !cfg.AllowWrite {
+			continue
+		}
+		var opts *tool.RegisterToolOptions
+		if td.Description != "" {
+			opts = &tool.RegisterToolOptions{Description: td.Description}
+		}
+		switch td.Name {
+		case ToolListTables:
+			_ = tool.RegisterListTablesTool(reg, &tool.ListTablesConfig{
+				Store:               cfg.MetadataStore,
+				Registry:            cfg.DatasourceRegistry,
+				DefaultDatasourceID: cfg.DefaultDatasourceID,
+			}, opts)
+		case ToolDescribeTable:
+			_ = tool.RegisterDescribeTableTool(reg, &tool.DescribeTableConfig{
+				Store:               cfg.MetadataStore,
+				Registry:            cfg.DatasourceRegistry,
+				DefaultDatasourceID: cfg.DefaultDatasourceID,
+			}, opts)
+		case ToolExecuteRead:
+			_ = tool.RegisterExecuteReadTool(reg, &tool.ExecuteReadConfig{
+				Exec:                cfg.Exec,
+				DefaultDatasourceID: cfg.DefaultDatasourceID,
+				DefaultTimeoutSec:   cfg.DefaultReadTimeoutSec,
+				DefaultMaxRows:      cfg.DefaultReadMaxRows,
+			}, opts)
+		case ToolExecuteWrite:
+			if !cfg.AllowWrite {
+				continue
+			}
+			pending := cfg.PendingStore
+			if pending == nil {
+				pending = tool.NewInMemoryWritePendingStore()
+			}
+			tokenGen := cfg.TokenGen
+			if tokenGen == nil {
+				tokenGen = tool.RandomTokenGenerator{}
+			}
+			_ = tool.RegisterExecuteWriteTool(reg, &tool.ExecuteWriteConfig{
+				Exec:                cfg.Exec,
+				Checker:             cfg.Checker,
+				PendingStore:        pending,
+				TokenGen:            tokenGen,
+				DefaultDatasourceID: cfg.DefaultDatasourceID,
+				ConfirmTTLSeconds:   cfg.WriteConfirmTTLSeconds,
+				DefaultTimeoutSec:   cfg.DefaultWriteTimeoutSec,
+			}, opts)
+		}
+	}
+}
+
 // NewDataQueryHandler 构建一个专用于数据查询的 ReAct Agent 处理器。
-// 它会注册 list_tables / describe_table / execute_read / （可选）execute_write 工具，
-// 并基于 DataQueryPromptConfig 注入系统提示与会话上下文（session_id、user_id、datasource_id）。
+// 工具按请求的数据源类型动态注册（仅注册该类型支持的工具），系统提示按 DatasourceType 分支注入。
 func NewDataQueryHandler(m model.Model, mem memory.Memory, cfg DataQueryConfig, mws ...middleware.Middleware) middleware.Handler {
 	if cfg.DatasourceRegistry == nil || cfg.MetadataStore == nil || cfg.Exec == nil {
-		// 保持简单的 panic，以便在服务启动阶段就能发现配置问题。
 		panic("NewDataQueryHandler: DatasourceRegistry, MetadataStore and Exec are required")
 	}
-
 	if cfg.MaxReActSteps <= 0 {
 		cfg.MaxReActSteps = 4
 	}
 	if cfg.WriteConfirmTTLSeconds <= 0 {
 		cfg.WriteConfirmTTLSeconds = 300
 	}
-
-	// 准备工具注册表。
-	reg := tool.NewRegistry()
-
-	// list_tables
-	_ = tool.RegisterListTablesTool(reg, &tool.ListTablesConfig{
-		Store:               cfg.MetadataStore,
-		Registry:            cfg.DatasourceRegistry,
-		DefaultDatasourceID: cfg.DefaultDatasourceID,
-	})
-
-	// describe_table
-	_ = tool.RegisterDescribeTableTool(reg, &tool.DescribeTableConfig{
-		Store:               cfg.MetadataStore,
-		Registry:            cfg.DatasourceRegistry,
-		DefaultDatasourceID: cfg.DefaultDatasourceID,
-	})
-
-	// execute_read
-	_ = tool.RegisterExecuteReadTool(reg, &tool.ExecuteReadConfig{
-		Exec:                cfg.Exec,
-		DefaultDatasourceID: cfg.DefaultDatasourceID,
-		DefaultTimeoutSec:   cfg.DefaultReadTimeoutSec,
-		DefaultMaxRows:      cfg.DefaultReadMaxRows,
-	})
-
-	// execute_write（仅在允许写/改时注册）
-	if cfg.AllowWrite {
-		pending := cfg.PendingStore
-		if pending == nil {
-			pending = tool.NewInMemoryWritePendingStore()
-		}
-		tokenGen := cfg.TokenGen
-		if tokenGen == nil {
-			tokenGen = tool.RandomTokenGenerator{}
-		}
-		_ = tool.RegisterExecuteWriteTool(reg, &tool.ExecuteWriteConfig{
-			Exec:                cfg.Exec,
-			Checker:             cfg.Checker,
-			PendingStore:        pending,
-			TokenGen:            tokenGen,
-			DefaultDatasourceID: cfg.DefaultDatasourceID,
-			ConfirmTTLSeconds:   cfg.WriteConfirmTTLSeconds,
-			DefaultTimeoutSec:   cfg.DefaultWriteTimeoutSec,
-		})
-	}
-
-	react := agent.NewReActAgent(m, mem, reg, agent.WithReActMaxSteps(cfg.MaxReActSteps))
 
 	final := func(ctx context.Context, req *agent.Request) (*agent.Response, error) {
 		if req == nil {
@@ -277,9 +417,20 @@ func NewDataQueryHandler(m model.Model, mem memory.Memory, cfg DataQueryConfig, 
 			datasourceID = cfg.DefaultDatasourceID
 		}
 
-		// 构造系统提示，并附加当前上下文信息，作为第一条 system message。
+		// 按当前请求的数据源 ID 解析类型，用于取描述符（工具能力 + 提示片段）。
+		datasourceType := "mysql"
+		if cfg.DatasourceTypes != nil && datasourceID != "" {
+			if t := cfg.DatasourceTypes[datasourceID]; t != "" {
+				datasourceType = t
+			}
+		}
+		descriptor := GetDescriptor(datasourceType)
+		reg := tool.NewRegistry()
+		registerDataQueryTools(reg, cfg, descriptor)
+		react := agent.NewReActAgent(m, mem, reg, agent.WithReActMaxSteps(cfg.MaxReActSteps))
+
 		promptCfg := DataQueryPromptConfig{
-			DatasourceType: "mysql", // 当前 MVP 聚焦 MySQL，可按需扩展
+			DatasourceType: datasourceType,
 			AllowWrite:     cfg.AllowWrite,
 		}
 		sys := BuildDataQuerySystemPrompt(promptCfg)

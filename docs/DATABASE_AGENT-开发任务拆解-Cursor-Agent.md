@@ -226,9 +226,24 @@ P4 API 与配置（需求 3、4）
 
 ---
 
-## 九、使用说明（给 Cursor AI Agent）
+## 九、Elasticsearch 支持（已实现）
 
-- **单次执行**：每次只领取一个任务（如 T-01），按「实现要点」「参考代码」完成后再进行下一任务；有依赖的任务需等前置完成。
+在完成 T-01～T-13 的基础上，已扩展对 **Elasticsearch** 数据源的支持，与 MySQL 共用同一套工具与 ReAct 编排：
+
+| 组件 | 说明 |
+|------|------|
+| **datasource** | `RegisterElasticsearch`、`NewElasticsearchDataSource`；Config 使用 `type: elasticsearch`，`dsn` 为 URL（如 `http://localhost:9200`）或 host+port。 |
+| **metadata** | `FetchSchemaElasticsearch`（_cat/indices + _mapping → Schema/Table/Column）；`RefreshFromRegistry` 支持 `datasource.ESClientProvider`。 |
+| **executor** | `ESExecutor`（执行 Search 请求体 JSON；mapping/字段错误包装为 `SchemaRelatedError`）；`MultiExecutor` 按数据源类型分发到 MySQL 或 ES。 |
+| **templates** | `NewDataQueryHandlerFromConfig` 注册 `elasticsearch` 类型并使用 `MultiExecutor`。 |
+
+配置示例见 `examples/database_agent/config.elasticsearch.yaml`。Agent 对 ES 的「列举索引」「查看 mapping」「只读查询」与 MySQL 的 list_tables / describe_table / execute_read 用法一致；DSL 为 Elasticsearch Search API 的请求体 JSON。
+
+---
+
+## 十、使用说明（给 Cursor AI Agent）
+
+- **单次执行**：每次只领取一个任务（如 T-01），按「实现要点」「参考代码」完成后再进行下一任务；有依赖的任务需等前置完成。Elasticsearch 支持已按上节实现，无需再领任务。
 - **风格**：与现有 `agent`、`tool`、`model`、`memory`、`config`、`errs`、`events`、`obs` 保持一致；新代码优先放在现有包内，若需新包（如 `dataquery`）则与根目录下各包同级。
 - **需求追溯**：每个任务在文档中标注了「需求来源」；实现时请对照《DATABASE_AGENT_REQUIREMENTS.md》中的工作流与安全约束。
 - **测试**：每个任务至少包含该包或该文件的单元测试；多包协作由 T-13 E2E 覆盖。

@@ -200,9 +200,17 @@ func NewServeCommand() *cobra.Command {
 					return
 				}
 				w.Header().Set("Content-Type", "application/json")
-				out := map[string]string{"reply": resp.Text}
+				out := map[string]any{"reply": resp.Text}
 				if debug {
 					out["request_id"] = requestID
+				}
+				if resp.Metadata != nil {
+					if v, ok := resp.Metadata["confirm_required"]; ok {
+						out["confirm_required"] = v
+					}
+					if v, ok := resp.Metadata["confirm_request"]; ok {
+						out["confirm_request"] = v
+					}
 				}
 				_ = json.NewEncoder(w).Encode(out)
 			})

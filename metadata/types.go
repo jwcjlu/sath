@@ -20,4 +20,7 @@ type Schema struct {
 	// Name 通常对应数据库名
 	Name   string  `json:"name"`
 	Tables []Table `json:"tables"`
+	// IndexToPattern 可选，仅 Elasticsearch 使用：具体索引名 -> 逻辑表名（索引模式，如 vm-manager-*）。
+	// 用于 describe_table(table_name=具体索引名) 时解析到对应逻辑表。
+	IndexToPattern map[string]string `json:"-"`
 }

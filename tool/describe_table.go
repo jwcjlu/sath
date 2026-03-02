@@ -19,10 +19,15 @@ type DescribeTableConfig struct {
 }
 
 // RegisterDescribeTableTool 向 r 注册 describe_table 工具。
-func RegisterDescribeTableTool(r *Registry, cfg *DescribeTableConfig) error {
+// opts 可选：若 opts 中 Description 非空则覆盖默认描述（用于按数据源类型差异化表述）。
+func RegisterDescribeTableTool(r *Registry, cfg *DescribeTableConfig, opts ...*RegisterToolOptions) error {
+	desc := "Describe table structure in the current datasource. Returns columns with type and nullability."
+	if len(opts) > 0 && opts[0] != nil && opts[0].Description != "" {
+		desc = opts[0].Description
+	}
 	return r.Register(Tool{
 		Name:        "describe_table",
-		Description: "Describe table structure in the current datasource. Returns columns with type and nullability.",
+		Description: desc,
 		Parameters: map[string]any{
 			"type": "object",
 			"properties": map[string]any{

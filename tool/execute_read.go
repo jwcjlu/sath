@@ -21,10 +21,15 @@ type ExecuteReadConfig struct {
 }
 
 // RegisterExecuteReadTool 向注册表中注册 execute_read 工具。
-func RegisterExecuteReadTool(r *Registry, cfg *ExecuteReadConfig) error {
+// opts 可选：若 opts 中 Description 非空则覆盖默认描述（用于按数据源类型差异化表述）。
+func RegisterExecuteReadTool(r *Registry, cfg *ExecuteReadConfig, opts ...*RegisterToolOptions) error {
+	desc := "Execute a read-only DSL (e.g. SQL SELECT) on the current datasource and return rows."
+	if len(opts) > 0 && opts[0] != nil && opts[0].Description != "" {
+		desc = opts[0].Description
+	}
 	return r.Register(Tool{
 		Name:        "execute_read",
-		Description: "Execute a read-only DSL (e.g. SQL SELECT) on the current datasource and return rows.",
+		Description: desc,
 		Parameters: map[string]any{
 			"type": "object",
 			"properties": map[string]any{
@@ -47,6 +52,10 @@ func RegisterExecuteReadTool(r *Registry, cfg *ExecuteReadConfig) error {
 				"max_rows": map[string]any{
 					"type":        "integer",
 					"description": "Maximum number of rows to return; non-negative.",
+				},
+				"index": map[string]any{
+					"type":        "string",
+					"description": "Optional. Elasticsearch: target index, comma-separated indices, or index pattern (e.g. vm-manager-*). Omit to search all indices.",
 				},
 			},
 			"required": []string{},

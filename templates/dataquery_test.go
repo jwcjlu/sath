@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	"github.com/sath/agent"
+	"github.com/sath/config"
 	"github.com/sath/datasource"
 	"github.com/sath/executor"
 	"github.com/sath/memory"
@@ -13,6 +14,22 @@ import (
 	"github.com/sath/model"
 	"github.com/sath/tool"
 )
+
+// TestNewDataQueryHandlerFromConfig_NoDataSources_ReturnsError 验证未配置数据源时返回错误（T-13 E2E 验收：503 场景）。
+func TestNewDataQueryHandlerFromConfig_NoDataSources_ReturnsError(t *testing.T) {
+	cfg := config.Config{DataSources: nil}
+	mwMap := DefaultMiddlewareMap()
+	h, err := NewDataQueryHandlerFromConfig(cfg, mwMap)
+	if h != nil {
+		t.Fatal("expected nil handler when no data sources")
+	}
+	if err == nil {
+		t.Fatal("expected error when no data sources")
+	}
+	if !strings.Contains(err.Error(), "no data_sources") {
+		t.Errorf("expected error about no data_sources, got: %v", err)
+	}
+}
 
 func TestBuildDataQuerySystemPrompt_ReadOnly(t *testing.T) {
 	p := BuildDataQuerySystemPrompt(DataQueryPromptConfig{
@@ -46,6 +63,27 @@ func TestBuildDataQuerySystemPrompt_AllowWrite(t *testing.T) {
 		"写/改提议阶段", "写/改确认与执行阶段",
 	}) {
 		t.Fatalf("writable prompt missing expected phrases:\n%s", p)
+	}
+}
+
+func TestBuildDataQuerySystemPrompt_Elasticsearch(t *testing.T) {
+	p := BuildDataQuerySystemPrompt(DataQueryPromptConfig{
+		DatasourceType: "elasticsearch",
+		AllowWrite:     false,
+	})
+	if p == "" {
+		t.Fatal("prompt should not be empty")
+	}
+	if !containsAll(p, []string{"Elasticsearch", "索引", "mapping", "Search", "execute_read"}) {
+		t.Fatalf("elasticsearch prompt missing expected keywords:\n%s", p)
+	}
+	// "es" 应被归一化为 elasticsearch 表述
+	p2 := BuildDataQuerySystemPrompt(DataQueryPromptConfig{
+		DatasourceType: "es",
+		AllowWrite:     false,
+	})
+	if !contains(p2, "Elasticsearch") {
+		t.Fatalf("es type should produce Elasticsearch prompt:\n%s", p2)
 	}
 }
 

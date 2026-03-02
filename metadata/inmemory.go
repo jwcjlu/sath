@@ -62,5 +62,16 @@ func (s *InMemoryStore) GetTable(ctx context.Context, name string) (*Table, erro
 			return &cp, nil
 		}
 	}
+	// Elasticsearch：具体索引名可解析到逻辑表（索引模式）
+	if schema.IndexToPattern != nil {
+		if pattern := schema.IndexToPattern[name]; pattern != "" {
+			for _, t := range schema.Tables {
+				if t.Name == pattern {
+					cp := t
+					return &cp, nil
+				}
+			}
+		}
+	}
 	return nil, nil
 }

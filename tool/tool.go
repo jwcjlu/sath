@@ -6,6 +6,12 @@ import (
 	"sync"
 )
 
+// RegisterToolOptions 用于注册工具时的可选覆盖（如按数据源类型的描述文案）。
+// 若 Description 非空，则覆盖该工具的默认 Description（模型可见）。
+type RegisterToolOptions struct {
+	Description string
+}
+
 // ExecuteFunc 是工具的执行函数签名。
 type ExecuteFunc func(ctx context.Context, params map[string]any) (any, error)
 

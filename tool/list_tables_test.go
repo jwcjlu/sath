@@ -87,6 +87,52 @@ func TestListTables_UseParamsDatasourceId(t *testing.T) {
 	}
 }
 
+func TestListTables_KeywordFilter(t *testing.T) {
+	store := metadata.NewInMemoryStore(func(ctx context.Context) (*metadata.Schema, error) {
+		return &metadata.Schema{
+			Name: "es",
+			Tables: []metadata.Table{
+				{Name: "backend-vm_manager"},
+				{Name: "logs"},
+				{Name: "vm_metrics"},
+			},
+		}, nil
+	})
+	cfg := &ListTablesConfig{
+		Store:               store,
+		DefaultDatasourceID: "main",
+	}
+	reg := NewRegistry()
+	_ = RegisterListTablesTool(reg, cfg)
+	_, _ = store.Refresh(context.Background())
+	tool, _ := reg.Get("list_tables")
+
+	// keyword=vm 应只返回名称含 vm 的索引
+	out, err := tool.Execute(context.Background(), map[string]any{"keyword": "vm"})
+	if err != nil {
+		t.Fatalf("Execute: %v", err)
+	}
+	list, ok := ListTablesResult(out)
+	if !ok || len(list) != 2 {
+		t.Fatalf("keyword=vm: expected 2 items, got %d ok=%v %v", len(list), ok, out)
+	}
+	names := make([]string, len(list))
+	for i := range list {
+		names[i] = list[i]["name"]
+	}
+	if (names[0] != "backend-vm_manager" || names[1] != "vm_metrics") &&
+		(names[0] != "vm_metrics" || names[1] != "backend-vm_manager") {
+		t.Errorf("keyword=vm: expected backend-vm_manager and vm_metrics, got %v", names)
+	}
+
+	// 无 keyword 返回全部
+	outAll, _ := tool.Execute(context.Background(), map[string]any{})
+	listAll, _ := ListTablesResult(outAll)
+	if len(listAll) != 3 {
+		t.Errorf("no keyword: expected 3, got %d", len(listAll))
+	}
+}
+
 func TestListTables_NotConfigured(t *testing.T) {
 	reg := NewRegistry()
 	err := RegisterListTablesTool(reg, nil)

@@ -77,10 +77,15 @@ type ExecuteWritePendingResponse struct {
 }
 
 // RegisterExecuteWriteTool 向注册表中注册 execute_write 工具。
-func RegisterExecuteWriteTool(r *Registry, cfg *ExecuteWriteConfig) error {
+// opts 可选：若 opts 中 Description 非空则覆盖默认描述（用于按数据源类型差异化表述）。
+func RegisterExecuteWriteTool(r *Registry, cfg *ExecuteWriteConfig, opts ...*RegisterToolOptions) error {
+	desc := "Propose and confirm write/change DSL with permission check and confirmation token."
+	if len(opts) > 0 && opts[0] != nil && opts[0].Description != "" {
+		desc = opts[0].Description
+	}
 	return r.Register(Tool{
 		Name:        "execute_write",
-		Description: "Propose and confirm write/change DSL with permission check and confirmation token.",
+		Description: desc,
 		Parameters: map[string]any{
 			"type": "object",
 			"properties": map[string]any{
