@@ -7,9 +7,8 @@ import (
 	"time"
 
 	"github.com/sath/datasource"
-	"go.
 	"go.mongodb.org/mongo-driver/bson"
-	"github.com/sath/datasource"
+	"go.mongodb.org/mongo-driver/mongo/options"
 )
 
 // MongoExecutor 基于 datasource.Registry 的 MongoDB 执行器，目前仅支持只读 find 查询。
@@ -25,12 +24,12 @@ func NewMongoExecutor(reg *datasource.Registry) *MongoExecutor {
 // mongoQuery 描述 execute_read 传入的 Mongo 查询 DSL。
 // 期望为 JSON 字符串，例如：
 // {"collection":"users","filter":{"status":"active"},"limit":50}
+type mongoQuery struct {
 	Collection string         `json:"collection"`
 	Filter     map[string]any `json:"filter"`
 	Limit      int64          `json:"limit"`
 	Projection map[string]any `json:"projection"`
 	Sort       map[string]int `json:"sort"`
-	Sort       map[string]int         `json:"sort"`
 }
 
 // Execute 实现 Executor。仅支持只读 find 查询；写操作由上层 execute_write 工具与其他执行器处理。
