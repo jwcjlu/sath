@@ -35,5 +35,6 @@ func DefaultMiddlewareMap() map[string]middleware.Middleware {
 		"recovery": middleware.RecoveryMiddleware,
 		"metrics":  middleware.MetricsMiddleware,
 		"tracing":  middleware.TracingMiddleware,
+		"debug":    middleware.DebugMiddleware(true),
 	}
 }

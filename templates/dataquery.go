@@ -28,7 +28,9 @@ const (
 // DefaultToolCapabilitiesByType 按数据源类型声明支持的工具列表；未注册描述符时回退用。
 var DefaultToolCapabilitiesByType = map[string][]string{
 	"mysql":         {ToolListTables, ToolDescribeTable, ToolExecuteRead, ToolExecuteWrite},
+	"hive":          {ToolListTables, ToolDescribeTable, ToolExecuteRead},
 	"elasticsearch": {ToolListTables, ToolDescribeTable, ToolExecuteRead},
+	"mongodb":       {ToolListTables, ToolDescribeTable, ToolExecuteRead},
 }
 
 // ToolDef 描述符中单工具定义：Name 与 tool 包注册名一致，Description 为空则使用 tool 包默认。
@@ -53,7 +55,9 @@ var typeDescriptors = make(map[string]*TypeDescriptor)
 
 func init() {
 	registerTypeDescriptor(mysqlDescriptor())
+	registerTypeDescriptor(hiveDescriptor())
 	registerTypeDescriptor(elasticsearchDescriptor())
+	registerTypeDescriptor(mongodbDescriptor())
 }
 
 func registerTypeDescriptor(d *TypeDescriptor) {
@@ -110,6 +114,42 @@ func mysqlDescriptor() *TypeDescriptor {
 	}
 }
 
+func hiveDescriptor() *TypeDescriptor {
+	return &TypeDescriptor{
+		Type: "hive",
+		Tools: []ToolDef{
+			{Name: ToolListTables, Description: "List tables in the current Hive database. Returns table names and optional comments."},
+			{Name: ToolDescribeTable, Description: "Describe Hive table structure in the current datasource. Returns columns with type and nullability/partition info if available."},
+			{Name: ToolExecuteRead, Description: "Execute a read-only Hive SQL (typically SELECT) on the current datasource and return rows."},
+		},
+		Prompt: struct {
+			Intro         string
+			ToolSummaries string
+			Workflow      string
+			Examples      string
+		}{
+			Intro: "你是一个安全可靠的数据查询助手，负责通过工具访问 Hive 数据源，帮助用户用自然语言完成数据仓库场景下的「列举、结构查看、只读查询」任务（写/改能力需单独开放）。\n\n",
+			ToolSummaries: "- list_tables：列举当前 Hive 数据库中的表（包含明细表、宽表等），可选 keyword 模糊过滤表名。\n" +
+				"- describe_table：查看指定 Hive 表的列名、类型，以及（在可用时）分区字段等信息，用于在编写查询前理解数据结构。\n" +
+				"- execute_read：执行只读 Hive SQL（通常是 SELECT），支持 WHERE 过滤、GROUP BY、ORDER BY、LIMIT 等，返回表格结果。\n",
+			Workflow: "1. 探索阶段：当你不了解当前 Hive 库结构时，先使用 list_tables 获取有哪些表，再使用 describe_table 查看关键表（特别是分区字段与时间字段）。\n" +
+				"2. 计划阶段：根据用户问题和表结构，在「思考」中说明你打算使用哪些分区（如按 dt、ds、date 字段限定范围）、哪些维度与指标，以及是否需要聚合。\n" +
+				"3. 只读查询阶段：\n" +
+				"   - 使用 execute_read 执行 SELECT 语句，**优先加上合理的分区过滤与 LIMIT**，避免全表扫描；可以先做聚合查询，再在必要时补充少量明细。\n" +
+				"   - 查询前应简要描述你即将执行的查询意图（不需要向用户展示 SQL，仅在思考中自我说明）。\n",
+			Examples: "1. 列举表：\n" +
+				"   - 用户：\"这个 Hive 里有哪些订单相关的表？\"\n" +
+				"   - 你：调用 list_tables，筛选名称中包含 \"order\" 的表，然后用自然语言总结。\n" +
+				"2. 查看结构与分区：\n" +
+				"   - 用户：\"看看 dwd_order_detail 这张表的字段。\"\n" +
+				"   - 你：调用 describe_table（table_name=\"dwd_order_detail\"），重点说明主键/业务键、金额字段、时间字段和分区字段（如 dt）。\n" +
+				"3. 只读查询：\n" +
+				"   - 用户：\"统计最近 7 天按渠道的订单数和金额。\"\n" +
+				"   - 你：在思考中说明将查询 dwd_order_detail，按 dt 限定最近 7 天，按渠道分组聚合，然后通过 execute_read 执行 SELECT，并用中文总结结果。\n",
+		},
+	}
+}
+
 func elasticsearchDescriptor() *TypeDescriptor {
 	return &TypeDescriptor{
 		Type: "elasticsearch",
@@ -151,6 +191,43 @@ func elasticsearchDescriptor() *TypeDescriptor {
 				"5. 按文档 _id 查询（勿与字段 M 混淆）：\n" +
 				"   - 用户：\"查 id 为 4103_3mrtug0l92h7 的记录\" 或只给出一串 4103_3mrtug0l92h7。\n" +
 				"   - 你：传 index=backend-vm_manager-*，body 为 {\"query\":{\"ids\":{\"values\":[\"4103_3mrtug0l92h7\"]}}} 或 {\"query\":{\"term\":{\"_id\":\"4103_3mrtug0l92h7\"}}}，**不要**用 term 查字段 M。若首次未传 index 或索引名写错，修正后再次调用 execute_read 再回复。\n",
+		},
+	}
+}
+
+func mongodbDescriptor() *TypeDescriptor {
+	return &TypeDescriptor{
+		Type: "mongodb",
+		Tools: []ToolDef{
+			{Name: ToolListTables, Description: "List collections in the current MongoDB datasource. Optional keyword: filter to collections whose name contains the keyword. Returns collection names and optional comments."},
+			{Name: ToolDescribeTable, Description: "Describe collection structure in the current datasource. Returns sampled top-level fields and rough types."},
+			{Name: ToolExecuteRead, Description: "Execute a read-only MongoDB find query. DSL must be a JSON string like {\"collection\":\"users\",\"filter\":{\"status\":\"active\"},\"limit\":50}."},
+		},
+		Prompt: struct {
+			Intro         string
+			ToolSummaries string
+			Workflow      string
+			Examples      string
+		}{
+			Intro: "你是一个安全可靠的数据查询助手，负责通过工具访问 MongoDB 数据源，帮助用户用自然语言完成数据的「列举、结构查看、只读查询」任务（写/改能力需单独开放）。\n\n",
+			ToolSummaries: "- list_tables：列举当前数据库中的集合（collections），可选 keyword 模糊过滤集合名。\n" +
+				"- describe_table：查看指定集合的示例字段（基于采样文档的顶层字段），用于在编写查询前理解文档结构。\n" +
+				"- execute_read：执行只读查询，DSL 为 JSON 字符串，例如 {\"collection\":\"users\",\"filter\":{\"status\":\"active\"},\"limit\":50}，相当于对指定集合做 find 查询。\n",
+			Workflow: "1. 探索阶段：当你不了解数据库结构时，先使用 list_tables 获取有哪些集合，再针对关键集合使用 describe_table 了解字段与文档形态。\n" +
+				"2. 计划阶段：根据用户问题和集合结构，在「思考」中用自然语言说明你打算查询哪些集合、使用哪些字段作为过滤条件与投影。\n" +
+				"3. 只读查询阶段：\n" +
+				"   - 使用 execute_read，构造 JSON DSL：至少包含 collection 字段，可选 filter（对象）、limit（整数）、projection（对象，如 {\"field\":1}）、sort（对象，如 {\"created_at\":-1}）。\n" +
+				"   - 优先返回聚合或关键结论（如数量、按某字段分布），必要时再补充明细文档示例，不要一次性返回过多行。\n" +
+				"   - 查询前在思考中简要说明你将使用的集合与过滤条件。\n",
+			Examples: "1. 列举集合：\n" +
+				"   - 用户：\"这个 MongoDB 里有哪些和用户相关的集合？\"\n" +
+				"   - 你：调用 list_tables，筛选名称中包含 \"user\" 的集合，然后用自然语言总结。\n" +
+				"2. 查看结构：\n" +
+				"   - 用户：\"帮我看看 users 集合的字段。\"\n" +
+				"   - 你：调用 describe_table（table_name=\"users\"），基于示例文档字段解释关键字段含义。\n" +
+				"3. 只读查询：\n" +
+				"   - 用户：\"查出最近注册的 10 个活跃用户。\"\n" +
+				"   - 你：在思考中说明将查询 users 集合，按 created_at 降序、status=active，并限制 10 条，然后通过 execute_read 传入 JSON DSL（如 {\"collection\":\"users\",\"filter\":{\"status\":\"active\"},\"sort\":{\"created_at\":-1},\"limit\":10}），最后用中文总结结果。\n",
 		},
 	}
 }
@@ -288,10 +365,12 @@ func NewDataQueryHandlerFromConfig(cfg config.Config, middlewareByName map[strin
 		}
 	}
 
-	// 构建数据源 Registry（支持 mysql、elasticsearch 类型）。
+	// 构建数据源 Registry（支持 mysql、hive、elasticsearch、mongodb 类型）。
 	dsReg := datasource.NewRegistry()
 	datasource.RegisterMySQL(dsReg)
+	datasource.RegisterHive(dsReg)
 	datasource.RegisterElasticsearch(dsReg)
+	datasource.RegisterMongoDB(dsReg)
 	idToType := make(map[string]string)
 	for _, ds := range cfg.DataSources {
 		if ds.Type == "" {
@@ -304,7 +383,7 @@ func NewDataQueryHandlerFromConfig(cfg config.Config, middlewareByName map[strin
 	}
 
 	store := metadata.NewInMemoryStore(nil)
-	exec := executor.NewMultiExecutor(dsReg, executor.NewMySQLExecutor(dsReg), executor.NewESExecutor(dsReg))
+	exec := executor.NewMultiExecutor(dsReg, executor.NewMySQLExecutor(dsReg), executor.NewESExecutor(dsReg), executor.NewMongoExecutor(dsReg))
 
 	dqCfg := DataQueryConfig{
 		DatasourceRegistry:     dsReg,
@@ -314,7 +393,7 @@ func NewDataQueryHandlerFromConfig(cfg config.Config, middlewareByName map[strin
 		DefaultDatasourceID:    cfg.DefaultDatasourceID,
 		DatasourceTypes:        idToType,
 		AllowWrite:             cfg.DataAllowWrite,
-		MaxReActSteps:          4,
+		MaxReActSteps:          20,
 		DefaultReadTimeoutSec:  0,
 		DefaultReadMaxRows:     0,
 		WriteConfirmTTLSeconds: 300,
@@ -449,25 +528,25 @@ func NewDataQueryHandler(m model.Model, mem memory.Memory, cfg DataQueryConfig, 
 		}
 
 		// 将系统提示注入 messages 之前。
-		req2 := *req
-		req2.Messages = append([]model.Message{
+		llmReq := *req
+		llmReq.Messages = append([]model.Message{
 			{Role: "system", Content: sys},
 		}, req.Messages...)
 
 		// 标记 agent_name 以便 metrics 中区分 dataquery 请求。
-		if req2.Metadata == nil {
-			req2.Metadata = make(map[string]any)
+		if llmReq.Metadata == nil {
+			llmReq.Metadata = make(map[string]any)
 		}
-		if _, ok := req2.Metadata["agent_name"]; !ok {
-			req2.Metadata["agent_name"] = "dataquery"
+		if _, ok := llmReq.Metadata["agent_name"]; !ok {
+			llmReq.Metadata["agent_name"] = "dataquery"
 		}
 
 		// 将 RequestID 注入 ctx，便于下游工具（如 execute_write）写审计事件时使用。
-		if req2.RequestID != "" {
-			ctx = context.WithValue(ctx, "request_id", req2.RequestID)
+		if llmReq.RequestID != "" {
+			ctx = context.WithValue(ctx, "request_id", llmReq.RequestID)
 		}
 
-		return react.Run(ctx, &req2)
+		return react.Run(ctx, &llmReq)
 	}
 
 	return middleware.Chain(final, mws...)

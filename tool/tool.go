@@ -20,7 +20,7 @@ type Tool struct {
 	Name        string
 	Description string
 	// Parameters 描述参数结构，遵循 JSON Schema 风格（V0.1 可简化为任意 map）。
-	Parameters map[string]any
+	Parameters any
 	Execute    ExecuteFunc
 }
 

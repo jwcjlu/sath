@@ -88,7 +88,7 @@ ORDER BY t.table_name, c.ordinal_position
 }
 
 // RefreshFromRegistry 通过 datasource.Registry 找到指定数据源并刷新内存 Store。
-// 支持 MySQL（dbProvider）与 Elasticsearch（datasource.ESClientProvider）。
+// 支持 MySQL（dbProvider）、Elasticsearch（datasource.ESClientProvider）与 MongoDB（datasource.MongoDatabaseProvider）。
 func RefreshFromRegistry(ctx context.Context, reg *datasource.Registry, store *InMemoryStore, datasourceID string) (*Schema, error) {
 	ds, err := reg.Get(datasourceID)
 	if err != nil {
@@ -104,6 +104,12 @@ func RefreshFromRegistry(ctx context.Context, reg *datasource.Registry, store *I
 	if ep, ok := ds.(datasource.ESClientProvider); ok {
 		store.fetch = func(ctx context.Context) (*Schema, error) {
 			return FetchSchemaElasticsearch(ctx, ep.ESClient())
+		}
+		return store.Refresh(ctx)
+	}
+	if mp, ok := ds.(datasource.MongoDatabaseProvider); ok {
+		store.fetch = func(ctx context.Context) (*Schema, error) {
+			return FetchSchemaMongo(ctx, mp.MongoDatabase())
 		}
 		return store.Refresh(ctx)
 	}
