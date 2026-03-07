@@ -81,6 +81,12 @@ func (c *mcpTool) Close() error {
 }
 
 func RegisterMcpTool(r *Registry, cfg *McpConfig, opts ...*RegisterToolOptions) {
+	if r == nil || cfg == nil {
+		return
+	}
+	if r.HasMcpServer(cfg.Id) {
+		return
+	}
 	mcpTool, err := NewMcpTool(cfg)
 	if err != nil {
 		return
@@ -98,6 +104,7 @@ func RegisterMcpTool(r *Registry, cfg *McpConfig, opts ...*RegisterToolOptions) 
 		tool.Execute = buildMcpExecute(cfg, tool.Name)
 		r.Register(tool)
 	}
+	r.MarkMcpServer(cfg.Id)
 }
 
 func buildMcpExecute(cfg *McpConfig, toolName string) ExecuteFunc {

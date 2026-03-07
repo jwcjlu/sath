@@ -12,6 +12,29 @@ import (
 	yaml "go.yaml.in/yaml/v2"
 )
 
+// MCPServerEntry 描述一个供 Skills 使用的 MCP 服务，与 tool.McpConfig 对齐。
+type MCPServerEntry struct {
+	Endpoint string `json:"endpoint" yaml:"endpoint"`
+	ID       string `json:"id" yaml:"id"`
+	Backend  string `json:"backend" yaml:"backend"`
+}
+
+// SkillsConfig 定义 Skills 子系统相关配置。
+type SkillsConfig struct {
+	// Dirs 指定 Skills 搜索目录列表，例如 ["skills", "skills.d"]。
+	Dirs []string `json:"skills_dirs" yaml:"skills_dirs"`
+	// EnabledSkills 为可选白名单，若非空则只启用列表中的技能。
+	EnabledSkills []string `json:"enabled_skills" yaml:"enabled_skills"`
+	// DisabledSkills 为可选黑名单，可用于临时关闭部分技能。
+	DisabledSkills []string `json:"disabled_skills" yaml:"disabled_skills"`
+	// EnforceWriteAllowedFromSkills 控制是否仅在存在声明 execute_write 的 Skill 时才注册写/改工具。
+	EnforceWriteAllowedFromSkills bool `json:"enforce_write_allowed_from_skills" yaml:"enforce_write_allowed_from_skills"`
+	// MCPServers 为可选的 MCP 服务列表；当 Skill 声明 mcp_servers 时，将据此创建客户端并把工具注册到 Agent 上下文。
+	MCPServers []MCPServerEntry `json:"mcp_servers" yaml:"mcp_servers"`
+	// AllowScriptExecution 是否允许执行 Skill 目录下脚本（scripts/）；默认 false，仅读取不执行。
+	AllowScriptExecution bool `json:"allow_script_execution" yaml:"allow_script_execution"`
+}
+
 // Config 保存框架在 V0.2 阶段的核心配置。
 type Config struct {
 	// 默认模型标识，如 "openai/gpt-4o"。
@@ -27,6 +50,9 @@ type Config struct {
 	DefaultDatasourceID string `json:"default_datasource_id" yaml:"default_datasource_id"`
 	// DataAllowWrite 控制数据查询 Agent 是否允许写/改；为 false 时仅启用只读工具。
 	DataAllowWrite bool `json:"data_allow_write" yaml:"data_allow_write"`
+
+	// Skills 为 Skills 子系统的全局配置。
+	Skills SkillsConfig `json:"skills" yaml:"skills"`
 }
 
 // FromEnv 从环境变量加载核心配置。

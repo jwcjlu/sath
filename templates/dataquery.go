@@ -343,6 +343,9 @@ type DataQueryConfig struct {
 	// 可选自定义实现；为空时使用内存实现与随机 token。
 	PendingStore tool.WritePendingStore
 	TokenGen     tool.TokenGenerator
+
+	// MCPServers 可选的 MCP 服务列表；当配置时，将对应 MCP 工具注册到该 Agent 的 Registry，供声明了 mcp_servers 的 Skill 使用。
+	MCPServers []config.MCPServerEntry
 }
 
 // NewDataQueryHandlerFromConfig 根据 Config 装配数据查询 ReAct Agent 与中间件链。
@@ -398,6 +401,7 @@ func NewDataQueryHandlerFromConfig(cfg config.Config, middlewareByName map[strin
 		DefaultReadMaxRows:     0,
 		WriteConfirmTTLSeconds: 300,
 		DefaultWriteTimeoutSec: 0,
+		MCPServers:             cfg.Skills.MCPServers,
 	}
 
 	return NewDataQueryHandler(m, mem, dqCfg, mws...), nil

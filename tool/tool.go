@@ -26,15 +26,41 @@ type Tool struct {
 
 // Registry 维护一组可用工具。
 type Registry struct {
-	mu    sync.RWMutex
-	tools map[string]Tool
+	mu           sync.RWMutex
+	tools        map[string]Tool
+	mcpServerIDs map[string]struct{} // 已注册的 MCP 服务 ID，用于按 Skill 使用时幂等注册
 }
 
 // NewRegistry 创建一个空的工具注册表。
 func NewRegistry() *Registry {
 	return &Registry{
-		tools: make(map[string]Tool),
+		tools:        make(map[string]Tool),
+		mcpServerIDs: make(map[string]struct{}),
 	}
+}
+
+// HasMcpServer 返回该 MCP 服务 ID 是否已在本 Registry 中注册过（用于按 Skill 动态注册时去重）。
+func (r *Registry) HasMcpServer(id string) bool {
+	if id == "" {
+		return false
+	}
+	r.mu.RLock()
+	_, ok := r.mcpServerIDs[id]
+	r.mu.RUnlock()
+	return ok
+}
+
+// MarkMcpServer 标记某 MCP 服务 ID 已在本 Registry 注册，调用方应在成功注册 MCP 工具后调用。
+func (r *Registry) MarkMcpServer(id string) {
+	if id == "" {
+		return
+	}
+	r.mu.Lock()
+	if r.mcpServerIDs == nil {
+		r.mcpServerIDs = make(map[string]struct{})
+	}
+	r.mcpServerIDs[id] = struct{}{}
+	r.mu.Unlock()
 }
 
 // Register 向注册表中添加一个工具。

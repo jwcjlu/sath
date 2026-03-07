@@ -108,3 +108,65 @@
 | 扩展 | 新增数据源类型时，仅更新能力矩阵并实现底层 Store/Exec，无需改 Agent 或 Run 签名。 |
 
 按上述实现后，**工具按数据源类型动态注册**，模型侧只看到当前类型支持的工具，语义清晰、体验更优雅。
+
+---
+
+## 附录：Tool 抽象方式对比（struct vs interface）
+
+当前实现中，`tool.Tool` 是一个**纯数据 struct**：
+
+```18:25:tool/tool.go
+// Tool 描述一个可被 Agent 调用的工具。
+type Tool struct {
+	Name        string
+	Description string
+	// Parameters 描述参数结构，遵循 JSON Schema 风格（V0.1 可简化为任意 map）。
+	Parameters map[string]any
+	Execute    ExecuteFunc
+}
+```
+
+也可以考虑将其改为接口形式，例如：
+
+```1:6:docs/tool-interface-example.go
+type Tool interface {
+	Name() string
+	Description() string
+	Execute(ctx context.Context, params map[string]any) (any, error)
+	Parameters() map[string]any
+	Type() ToolType
+}
+```
+
+二者在当前工程中的**优缺点对比如下**。
+
+### struct 版本（当前实现）
+
+- **优点**
+  - **简单直观**：`Tool` 只是一个数据结构，`Registry` 只是 `map[string]Tool`，阅读和调试成本低。
+  - **构造方便**：所有工具都可以用字面量或简单工厂构造，无需定义额外类型或实现一整套接口方法，符合目前 `RegisterXxxTool` 函数的使用方式。
+  - **易于序列化与调试**：`Tool` 是值类型，可以方便地用于日志和调试，比接口值更可预期。
+  - **性能与逃逸友好**：按值存储在 `map[string]Tool` 中，无额外的动态分派/指针 indirection，对当前规模来说足够高效且易于内联。
+  - **与现有模型集成简单**：工具描述（Name / Description / Parameters）直接由 struct 字段提供，传给底层 `ToolCallingModel` 即可，无需再从接口方法组装一层。
+- **缺点**
+  - **缺少多态扩展点**：所有工具共享同一个实现形态（`ExecuteFunc` + 元数据）。若未来希望为不同类型工具（例如远程 MCP 工具、本地工具、复合工具）挂载不同的行为或公共方法，只能通过额外的类型断言或外层包装。
+  - **类型扩展需改 struct 定义**：若要为工具增加新的通用能力（例如 `Type() ToolType` 或某种分组标签），需要修改 struct 并更新所有构造处，而不是为特定实现单独扩展。
+
+### interface 版本（假设的重构方案）
+
+- **优点**
+  - **多态更灵活**：可以为不同实现提供不同的内部状态和行为，例如：
+    - 某类远程工具实现一个 `remoteTool` 结构，内部自带客户端与 server 配置；
+    - 数据查询工具实现一个 `dataQueryTool`，可以缓存元数据或注入额外上下文。
+  - **更适合做「按类型分发」与包装**：可以在注册时根据 `ToolType` 做差异化处理，或通过装饰器模式对某一类工具统一加监控/限流，而不必在外层写大量 `switch`。
+  - **Mock 更细粒度**：在测试中可以实现一个最小的 `Tool` 接口实现来模拟特定行为，而不是必须构造完整 struct。
+- **缺点**
+  - **增加心智与样板代码**：为每个具体工具类型都要定义一个 struct 并实现一套方法（Name/Description/Parameters/Type），对于当前以「函数式注册」为主的风格（`RegisterXxxTool` 直接包一层闭包）来说，样板代码明显增加。
+  - **与现有 Registry 定义不兼容**：`Registry` 目前持有的是 `map[string]Tool`（struct）。若改为接口版，需要统一替换为 `map[string]ToolInterface`，会波及所有使用点，重构范围较大。
+  - **序列化与调试变复杂**：接口值在日志和序列化时需要额外处理（尤其是带私有状态的实现），不像当前 struct 一目了然。
+  - **短期收益有限**：在现有代码中，工具的行为已经通过 `ExecuteFunc` + 传入闭包的方式足够灵活；增加 `Type()` 等接口方法带来的好处暂不明显，更多是为未来的可能扩展预留，存在一定的 YAGNI 风险。
+
+### 结论
+
+- 就当前工程规模与使用方式而言，**保持 `Tool` 为简单 struct 更符合「简单 + 易用」的设计取向**，也与现有 `RegisterXxxTool` 工厂函数风格相契合。
+- 若未来需要对不同来源/类型的工具（本地、远程等）做更强的分类、多态包装或统一装饰（例如按 `ToolType` 路由、对一类工具统一加重试/限流），可以再引入一层接口封装或适配器，而不必立即重写底层抽象。

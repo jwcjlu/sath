@@ -5,9 +5,8 @@ import (
 	"fmt"
 
 	"github.com/sath/datasource"
-	"go.
 	"go.mongodb.org/mongo-driver/bson"
-	"github.com/sath/datasource"
+	"go.mongodb.org/mongo-driver/mongo"
 )
 
 // FetchSchemaMongo 从 MongoDB 拉取当前库的元数据：集合列表及每个集合示例文档的顶层字段。
