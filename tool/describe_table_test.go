@@ -41,8 +41,8 @@ func TestRegisterDescribeTableTool_AndExecute(t *testing.T) {
 	if !ok {
 		t.Fatal("describe_table not found")
 	}
-	if tool.Parameters["type"] != "object" {
-		t.Errorf("parameters type: %v", tool.Parameters["type"])
+	if params, _ := tool.Parameters.(map[string]any); params != nil && params["type"] != "object" {
+		t.Errorf("parameters type: %v", params["type"])
 	}
 
 	out, err := tool.Execute(context.Background(), map[string]any{

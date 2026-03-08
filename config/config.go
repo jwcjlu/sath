@@ -33,6 +33,10 @@ type SkillsConfig struct {
 	MCPServers []MCPServerEntry `json:"mcp_servers" yaml:"mcp_servers"`
 	// AllowScriptExecution 是否允许执行 Skill 目录下脚本（scripts/）；默认 false，仅读取不执行。
 	AllowScriptExecution bool `json:"allow_script_execution" yaml:"allow_script_execution"`
+	// ScriptAllowedExtensions 允许执行的脚本扩展名白名单，未配置时默认仅 [".sh"]（见需求 11.3.3、任务 15.1）。
+	ScriptAllowedExtensions []string `json:"script_allowed_extensions" yaml:"script_allowed_extensions"`
+	// ScriptTimeoutSeconds 单次脚本执行最大耗时（秒），未配置或 <=0 时默认 30；可设上限防止配置错误（见 11.3.9）。
+	ScriptTimeoutSeconds int `json:"script_timeout_seconds" yaml:"script_timeout_seconds"`
 }
 
 // Config 保存框架在 V0.2 阶段的核心配置。

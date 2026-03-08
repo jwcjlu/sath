@@ -325,6 +325,7 @@ mcp_tools: [read_file, list_dir, get_repo_info]
 - `SkillsDirs []string`：扫描的技能目录列表；
 - `EnabledSkills []string`：可选白名单，如果非空则只启用指定技能；
 - `DisabledSkills []string`：可选黑名单，便于临时关闭某些 Skills。
+- **脚本执行（可选，参见 11.3、11.3.9）**：`allow_script_execution`、`script_allowed_extensions`、`script_timeout_seconds`；后续扩展可增加 `script_interpreters`（扩展名→解释器）、`enforce_skill_allowed_tools_for_script`（是否按 Skill 的 `allowed_tools` 做执行前校验）。
 - **MCP 信息（可选）**：在 Skills 配置中可声明与 MCP 的关联，供「使用 MCP 的 Skill」或 Skills-aware Agent 使用：
   - `MCPServers` / `mcp_servers`：MCP 服务列表（如 endpoint、id、backend），与现有 MCP 客户端配置结构一致；
   - 当某 Skill 的 frontmatter 声明了 `mcp_servers` 时，运行时可根据全局 Skills 配置中的 MCP 信息解析出对应端点或客户端，确保该 Skill 可用到正确的 MCP 能力；
@@ -617,6 +618,111 @@ Skill 文档中应明确：
 - **当前**：不提供「执行 Skill 目录下脚本」的工具；仅支持对 `scripts/` 下文件的**读取**（与 `docs/`、`assets/` 一致）。
 - **原因**：脚本执行属高危能力，需沙箱、权限与配置开关（参见 6.1 脚本安全）；第一版聚焦「按需读取」即可满足大部分场景。
 - **后续**：若需支持，可新增 `execute_skill_script(skill_name, script_relative_path, args)` 类工具，并配合配置项（如 `skills.allow_script_execution`）与 `allowed_tools` 白名单使用。
+
+### 11.3 脚本执行详细设计
+
+在启用脚本执行能力时，按以下设计实现，在安全可控前提下支持执行 Skill 捆绑的脚本。
+
+#### 11.3.1 目标与范围
+
+- **目标**：允许模型在遵循 Skill 指令的前提下，调用「执行某 Skill 目录下指定脚本」的工具，用于自动化、数据准备、本地校验等辅助能力。
+- **范围**：仅限已索引的 Skill、且路径与扩展名符合白名单；执行受全局配置与（可选）Skill 级白名单约束。
+
+#### 11.3.2 工具定义
+
+- **工具名**：`execute_skill_script`
+- **参数**：
+  - `name`（必填）：Skill 名称（kebab-case），与 `load_skill` 一致。
+  - `path`（必填）：脚本在 Skill 根目录下的相对路径，如 `scripts/run.sh`。
+  - `args`（可选，后续扩展）：字符串数组，作为脚本参数传入；第一版可为空或不实现，由调用方在脚本内通过环境变量等间接传参。
+- **行为**：在配置允许的前提下，将 `path` 解析为 Skill 根目录下的绝对路径，做安全校验后以规定方式执行，将 stdout/stderr 合并返回；执行失败或超时返回明确错误信息。
+
+#### 11.3.3 配置项
+
+| 配置项 | 类型 | 默认值 | 说明 |
+|--------|------|--------|------|
+| `skills.allow_script_execution` | bool | false | 为 true 时，Handler 才注册 `execute_skill_script` 工具；为 false 时工具不注册或执行时直接返回「脚本执行已禁用」类错误。 |
+| `skills.script_allowed_extensions` | []string | 可选，如 `[".sh"]` | 允许执行的脚本扩展名白名单；未配置时建议仅允许 `.sh`。 |
+| `skills.script_timeout_seconds` | int | 可选，如 30 | 单次脚本执行最大耗时（秒），超时则终止进程并返回错误。 |
+
+配置来源：全局 Config 的 `SkillsConfig`（YAML/JSON 或环境变量覆盖），与 7.1 配置建议一致。
+
+#### 11.3.4 路径与安全约束
+
+- **路径解析**：
+  - 由 `skills.Index` 根据 `name` 得到该 Skill 的 `SKILL.md` 路径，其父目录即为 Skill 根目录。
+  - `path` 须为相对路径，经 `filepath.Clean` 规范化后不得包含 `..`，且最终绝对路径必须落在 Skill 根目录下（或其一子目录内）。
+- **目录与扩展名白名单**：
+  - **目录限制**：仅允许执行路径以 `scripts/` 为前缀的脚本（即脚本必须位于 Skill 的 `scripts/` 子目录下），禁止执行 `docs/`、`assets/` 或根目录下的可执行文件。
+  - **扩展名白名单**：仅允许执行配置中 `script_allowed_extensions` 所列扩展名（如 `.sh`）；第一版可仅支持 `.sh`，由 `sh` 解释器执行。
+- **存在性校验**：执行前需对解析后的绝对路径做 `os.Stat`，确认文件存在且为常规文件（非目录、非符号链接逃逸到目录外）。
+
+#### 11.3.5 执行方式
+
+- **工作目录**：进程的当前工作目录（cwd）设为该 Skill 的根目录，便于脚本内使用相对路径访问同 Skill 下的 `docs/`、`assets/`。
+- **解释器**：第一版仅支持 `.sh`，使用系统 `sh`（或 `exec.Command("sh", scriptPath)`）执行，不传入用户可控参数；若后续支持 `args`，需按参数列表追加到命令行，并注意参数转义与注入风险。
+- **超时**：使用 `context.WithTimeout`（或等价机制）限制执行时间，超时后终止子进程；超时值来自 `script_timeout_seconds`，未配置时使用合理默认（如 30 秒）。
+- **环境变量**：不向脚本传递未过滤的用户输入；若需传递 Skill 名、路径等，可使用只读的环境变量（如 `SKILL_NAME`、`SKILL_ROOT`），由执行层固定设置。
+
+#### 11.3.6 与 Skill 元数据的关系
+
+- **allowed_tools**：Skill 的 frontmatter 中可声明 `allowed_tools: [..., execute_skill_script]`，表示该 Skill 允许使用脚本执行能力；执行层可**可选**做校验：仅当 Skill 的 `allowed_tools` 包含 `execute_skill_script` 时才允许执行该 Skill 的脚本，否则返回「该 Skill 未声明允许执行脚本」类错误。若不做校验，则仅依赖全局 `allow_script_execution` 与路径/扩展名白名单。
+- **安全建议**：生产环境仅对经过审计的 Skill 开启脚本执行，并尽量结合 `enabled_skills` 白名单使用。
+
+#### 11.3.7 错误与返回
+
+- **成功**：返回脚本的 stdout 与 stderr 合并后的字符串（或结构化字段，由实现决定）。
+- **失败**：返回明确错误信息，例如：
+  - 配置未启用脚本执行；
+  - Skill 不存在或未索引；
+  - path 非法（含 `..`、不在 Skill 根下、不在 `scripts/` 下、扩展名不在白名单）；
+  - 文件不存在或非普通文件；
+  - 执行超时；
+  - 进程启动或执行失败（可附带 stderr 或 exit status）。
+- 实现上可对「执行失败但已有部分输出」的情况，将已捕获的输出与错误信息一并返回，便于排障。
+
+#### 11.3.8 实现状态
+
+- **第一版（当前）**：可实现为「仅支持 `scripts/` 下 `.sh`、全局开关 `allow_script_execution`、无 `args`、固定超时」的占位或最小实现；若暂不开放，则工具不注册或执行时统一返回「脚本执行已禁用」。
+- **后续扩展**：按 11.3.9 设计实现多扩展名与解释器、可配置超时、以及按 Skill 的 `allowed_tools` 做执行前校验，与 6.1 脚本安全、7.1 配置建议保持一致。
+
+#### 11.3.9 后续扩展设计（多扩展名 / 可配置超时 / allowed_tools 校验）
+
+在首版脚本执行能力落地后，可按需实现下列扩展，并与 **6.1 脚本安全**、**7.1 配置建议** 保持一致。
+
+**（1）更多扩展名与指定解释器**
+
+- **目标**：除 `.sh` 外，支持 `.py` 等扩展名，并为每种扩展名指定解释器与默认参数，避免任意解释器带来的安全与可预测性问题。
+- **配置扩展**（纳入 `SkillsConfig`，与 7.1 一致）：
+  - **方案 A（扩展名 → 解释器映射）**：新增 `script_interpreters`，类型为「扩展名 → 解释器配置」的映射，例如：
+    - `".sh"` → `{ "command": "sh", "args": [] }`
+    - `".py"` → `{ "command": "python3", "args": ["-u"] }` 或 `{ "command": "/usr/bin/python3", "args": [] }`
+  - **方案 B（扩展名白名单 + 固定映射）**：保持 `script_allowed_extensions` 白名单，在实现内维护「扩展名 → 解释器」的固定映射（如 `.sh`→`sh`、`.py`→`python3`），不暴露为配置；仅通过白名单控制允许的扩展名。
+- **执行层**：根据脚本路径的扩展名查找解释器配置；使用 `exec.Command(interpreter, append(args, scriptPath)...)` 执行；不将未过滤的用户输入传入解释器参数（`args` 若支持，需严格转义与长度限制）。
+- **与 6.1 的衔接**：脚本执行仍视为高危，仅对 `script_allowed_extensions` 内且已配置/映射的解释器执行；生产环境仅启用经审计的 Skills（6.1 第三点）。
+
+**（2）可配置超时**
+
+- **目标**：不同环境或不同脚本类型可配置不同的执行超时时间，与 7.1 中「配置集中、可覆盖」一致。
+- **配置**：已有 `skills.script_timeout_seconds`（11.3.3）；扩展设计约定：
+  - 未配置或 ≤0 时使用默认值（如 30 秒）；
+  - 可设上限（如 300 秒），防止配置错误导致长时间占用；
+  - 若后续支持按扩展名或 Skill 差异化超时，可在 `script_interpreters` 每项或 Skill 元数据中增加可选 `timeout_seconds`，执行时优先取该值，否则取全局 `script_timeout_seconds`。
+- **执行层**：`context.WithTimeout(ctx, time.Duration(script_timeout_seconds)*time.Second)`；超时后终止子进程并返回明确「执行超时」错误（11.3.7）。
+
+**（3）按 Skill 的 `allowed_tools` 做执行前校验**
+
+- **目标**：与 6.1「工具白名单」一致：仅当 Skill 在 frontmatter 中声明了 `allowed_tools` 包含 `execute_skill_script` 时，才允许执行该 Skill 目录下的脚本，否则拒绝并返回明确错误。
+- **配置**：新增全局开关，例如 `skills.enforce_skill_allowed_tools_for_script`（bool，默认 false）：
+  - 为 **false**：仅依赖全局 `allow_script_execution` 与路径/扩展名白名单，不校验 Skill 的 `allowed_tools`（与首版行为一致）；
+  - 为 **true**：在执行前读取该 Skill 的 `SkillMeta.AllowedTools`，若未包含 `execute_skill_script`，则直接返回「该 Skill 未声明允许执行脚本（allowed_tools 需包含 execute_skill_script）」类错误，不执行脚本。
+- **与 6.1 的衔接**：6.1 规定「在工具执行层可选做一次校验：若 Skill 尝试调用未在白名单的高危工具，可给出警告或拒绝」；脚本执行属高危，故将「Skill 是否声明 `execute_skill_script`」作为可选强校验，由配置控制，便于生产收紧策略。
+- **与 7.1 的衔接**：上述开关纳入 `SkillsConfig`，与 `EnabledSkills`/`DisabledSkills` 等一起由 YAML/JSON 或环境变量加载与覆盖。
+
+**（4）实施顺序与兼容性**
+
+- 可配置超时（2）可与首版同步实现（仅读取已有或新增的 `script_timeout_seconds`）。
+- 多扩展名与解释器（1）、allowed_tools 校验（3）建议在首版稳定后迭代：先实现（3）并默认关闭，再实现（1）并扩展 `script_allowed_extensions` 与解释器映射；配置项命名与 7.1 保持一致（如 `skills.script_interpreters`、`skills.enforce_skill_allowed_tools_for_script`）。
 
 ---
 

@@ -129,9 +129,46 @@ func RegisterReadSkillFileTool(reg *Registry, idx *skills.Index) error {
 	})
 }
 
+// ExecuteSkillScriptOptions 脚本执行可选配置（任务 15.1）；nil 或零值使用默认（仅 .sh，30 秒超时）。
+type ExecuteSkillScriptOptions struct {
+	// AllowedExtensions 允许的扩展名白名单，如 [".sh"]；空时默认 [".sh"]。
+	AllowedExtensions []string
+	// TimeoutSeconds 单次执行超时（秒）；<=0 时默认 30；建议上限 300。
+	TimeoutSeconds int
+}
+
+func defaultScriptAllowedExtensions(opts *ExecuteSkillScriptOptions) []string {
+	if opts != nil && len(opts.AllowedExtensions) > 0 {
+		return opts.AllowedExtensions
+	}
+	return []string{".sh"}
+}
+
+// scriptInterpreter 根据脚本扩展名返回解释器命令（.sh -> sh, .py -> python3）。
+func scriptInterpreter(ext string) string {
+	switch ext {
+	case ".py":
+		return "python"
+	default:
+		return "sh"
+	}
+}
+
+func defaultScriptTimeout(opts *ExecuteSkillScriptOptions) time.Duration {
+	sec := 30
+	if opts != nil && opts.TimeoutSeconds > 0 {
+		sec = opts.TimeoutSeconds
+		if sec > 300 {
+			sec = 300
+		}
+	}
+	return time.Duration(sec) * time.Second
+}
+
 // RegisterExecuteSkillScriptTool 向 Registry 注册执行 Skill 目录下脚本的工具（可选，受 allowScriptExecution 控制）。
-// 当 allowScriptExecution 为 false 时，工具执行直接返回错误；为 true 时尝试在限制路径下执行脚本（仅 scripts/ 下 .sh）。
-func RegisterExecuteSkillScriptTool(reg *Registry, idx *skills.Index, allowScriptExecution bool) error {
+// 当 allowScriptExecution 为 false 时，工具执行直接返回错误；为 true 时在 scripts/ 下按 AllowedExtensions 与 TimeoutSeconds 执行（任务 15.2～15.4）。
+// opts 可为 nil，此时默认仅 .sh、30 秒超时。
+func RegisterExecuteSkillScriptTool(reg *Registry, idx *skills.Index, allowScriptExecution bool, opts *ExecuteSkillScriptOptions) error {
 	if reg == nil {
 		return errors.New("execute_skill_script: registry is nil")
 	}
@@ -139,6 +176,8 @@ func RegisterExecuteSkillScriptTool(reg *Registry, idx *skills.Index, allowScrip
 		return errors.New("execute_skill_script: index is nil")
 	}
 	allow := allowScriptExecution
+	allowedExt := defaultScriptAllowedExtensions(opts)
+	timeout := defaultScriptTimeout(opts)
 	return reg.Register(Tool{
 		Name:        "execute_skill_script",
 		Description: "Execute a script bundled with a Skill (e.g. scripts/run.sh). Only available when script execution is enabled in config; path must be under the skill directory, typically under scripts/.",
@@ -195,15 +234,24 @@ func RegisterExecuteSkillScriptTool(reg *Registry, idx *skills.Index, allowScrip
 			if !strings.HasPrefix(cleaned, "scripts") {
 				return nil, errors.New("execute_skill_script: only scripts under scripts/ are allowed")
 			}
-			if filepath.Ext(cleaned) != ".sh" {
-				return nil, errors.New("execute_skill_script: only .sh scripts are allowed")
+			ext := filepath.Ext(cleaned)
+			allowed := false
+			for _, e := range allowedExt {
+				if e == ext {
+					allowed = true
+					break
+				}
+			}
+			if !allowed {
+				return nil, fmt.Errorf("execute_skill_script: extension %q not in allowed list %v", ext, allowedExt)
 			}
 			if _, err := os.Stat(fullPath); err != nil {
-				return nil, err
+				return nil, fmt.Errorf("execute_skill_script: script file: %w", err)
 			}
-			runCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
+			interpreter := scriptInterpreter(ext)
+			runCtx, cancel := context.WithTimeout(ctx, timeout)
 			defer cancel()
-			cmd := exec.CommandContext(runCtx, "sh", fullPath)
+			cmd := exec.CommandContext(runCtx, interpreter, fullPath)
 			cmd.Dir = skillRoot
 			out, err := cmd.CombinedOutput()
 			if err != nil {

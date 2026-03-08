@@ -91,7 +91,11 @@ func NewSkillsAwareChatHandlerFromConfig(cfg config.Config, skillsIdx *skills.In
 		}
 		if skillsIdx != nil {
 			_ = tool.RegisterLoadSkillTool(reg, skillsIdx, mcpServers)
-			_ = tool.RegisterExecuteSkillScriptTool(reg, skillsIdx, cfg.Skills.AllowScriptExecution)
+			scriptOpts := &tool.ExecuteSkillScriptOptions{
+				AllowedExtensions: cfg.Skills.ScriptAllowedExtensions,
+				TimeoutSeconds:    cfg.Skills.ScriptTimeoutSeconds,
+			}
+			_ = tool.RegisterExecuteSkillScriptTool(reg, skillsIdx, cfg.Skills.AllowScriptExecution, scriptOpts)
 		}
 
 		react := agent.NewReActAgent(m, mem, reg, agent.WithReActMaxSteps(20))

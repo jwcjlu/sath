@@ -35,8 +35,8 @@ func TestRegisterListTablesTool_AndExecute(t *testing.T) {
 	if tool.Name != "list_tables" {
 		t.Errorf("name: %s", tool.Name)
 	}
-	if tool.Parameters["type"] != "object" {
-		t.Errorf("parameters type: %v", tool.Parameters["type"])
+	if params, _ := tool.Parameters.(map[string]any); params != nil && params["type"] != "object" {
+		t.Errorf("parameters type: %v", params["type"])
 	}
 
 	ctx := context.Background()
