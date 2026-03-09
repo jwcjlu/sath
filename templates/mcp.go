@@ -2,12 +2,14 @@ package templates
 
 import (
 	"context"
+	"strings"
+
 	"github.com/sath/agent"
+	"github.com/sath/events"
 	"github.com/sath/memory"
 	"github.com/sath/middleware"
 	"github.com/sath/model"
 	"github.com/sath/tool"
-	"strings"
 )
 
 // Config 描述 MCP Agent 的核心配置。
@@ -55,13 +57,23 @@ func NewMCPAgentHandler(m model.Model, mem memory.Memory, cfg Config, mws ...mid
 
 	// 注册 MCP 远端工具为本地 tools。
 	reg := tool.NewRegistry()
+	if bus := events.DefaultBus(); bus != nil {
+		reg.SetEventBus(bus)
+	}
 	tool.RegisterMcpTool(reg, &tool.McpConfig{
 		Endpoint: cfg.Endpoint,
 		Id:       cfg.ID,
 		Backend:  cfg.Backend,
 	})
 
-	react := agent.NewReActAgent(m, mem, reg, agent.WithReActMaxSteps(cfg.MaxReActSteps), agent.WithReActMaxHistory(cfg.MaxHistory))
+	reactOpts := []agent.ReActOption{
+		agent.WithReActMaxSteps(cfg.MaxReActSteps),
+		agent.WithReActMaxHistory(cfg.MaxHistory),
+	}
+	if bus := events.DefaultBus(); bus != nil {
+		reactOpts = append(reactOpts, agent.WithReActEventBus(bus))
+	}
+	react := agent.NewReActAgent(m, mem, reg, reactOpts...)
 
 	sys := BuildMCPSystemPrompt()
 
@@ -74,7 +86,9 @@ func NewMCPAgentHandler(m model.Model, mem memory.Memory, cfg Config, mws ...mid
 		llmReq.Messages = append([]model.Message{
 			{Role: "system", Content: sys},
 		}, req.Messages...)
-
+		if llmReq.RequestID != "" {
+			ctx = context.WithValue(ctx, tool.ContextKeyRequestID, llmReq.RequestID)
+		}
 		return react.Run(ctx, &llmReq)
 	}
 

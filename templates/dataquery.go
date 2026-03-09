@@ -9,6 +9,8 @@ import (
 	"github.com/sath/auth"
 	"github.com/sath/config"
 	"github.com/sath/datasource"
+	"github.com/sath/events"
+	
 	"github.com/sath/executor"
 	"github.com/sath/memory"
 	"github.com/sath/metadata"
@@ -509,8 +511,15 @@ func NewDataQueryHandler(m model.Model, mem memory.Memory, cfg DataQueryConfig, 
 		}
 		descriptor := GetDescriptor(datasourceType)
 		reg := tool.NewRegistry()
+		if bus := events.DefaultBus(); bus != nil {
+			reg.SetEventBus(bus)
+		}
 		registerDataQueryTools(reg, cfg, descriptor)
-		react := agent.NewReActAgent(m, mem, reg, agent.WithReActMaxSteps(cfg.MaxReActSteps))
+		reactOpts := []agent.ReActOption{agent.WithReActMaxSteps(cfg.MaxReActSteps)}
+		if bus := events.DefaultBus(); bus != nil {
+			reactOpts = append(reactOpts, agent.WithReActEventBus(bus))
+		}
+		react := agent.NewReActAgent(m, mem, reg, reactOpts...)
 
 		promptCfg := DataQueryPromptConfig{
 			DatasourceType: datasourceType,
@@ -545,9 +554,9 @@ func NewDataQueryHandler(m model.Model, mem memory.Memory, cfg DataQueryConfig, 
 			llmReq.Metadata["agent_name"] = "dataquery"
 		}
 
-		// 将 RequestID 注入 ctx，便于下游工具（如 execute_write）写审计事件时使用。
+		// 将 RequestID 注入 ctx，便于下游工具（如 execute_write）与事件总线关联。
 		if llmReq.RequestID != "" {
-			ctx = context.WithValue(ctx, "request_id", llmReq.RequestID)
+			ctx = context.WithValue(ctx, tool.ContextKeyRequestID, llmReq.RequestID)
 		}
 
 		return react.Run(ctx, &llmReq)

@@ -13,9 +13,13 @@ const (
 	AgentInit Kind = "agent.init"
 	// RunStarted 表示一次 Run 开始。
 	RunStarted Kind = "agent.run.started"
+	// ModelInvoked 表示即将调用模型 API（Chat/ChatWithTools），用于跟踪发给模型的提示。
+	ModelInvoked Kind = "agent.model.invoked"
 	// ModelResponded 表示已收到模型响应（Chat/Generate 返回）。
 	ModelResponded Kind = "agent.model.responded"
-	// ToolExecuted 表示执行了一次工具调用。
+	// ToolInvoked 表示即将执行工具调用（Execute 调用前），Payload 含 tool、input。
+	ToolInvoked Kind = "agent.tool.invoked"
+	// ToolExecuted 表示执行了一次工具调用（Execute 返回后），Payload 含 tool、input、output、失败时 error。
 	ToolExecuted Kind = "agent.tool.executed"
 	// RunCompleted 表示一次 Run 正常完成。
 	RunCompleted Kind = "agent.run.completed"

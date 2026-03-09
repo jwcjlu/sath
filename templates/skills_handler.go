@@ -7,6 +7,7 @@ import (
 
 	"github.com/sath/agent"
 	"github.com/sath/config"
+	"github.com/sath/events"
 	"github.com/sath/memory"
 	"github.com/sath/middleware"
 	"github.com/sath/model"
@@ -80,6 +81,9 @@ func NewSkillsAwareChatHandlerFromConfig(cfg config.Config, skillsIdx *skills.In
 		}
 
 		reg := tool.NewRegistry()
+		if bus := events.DefaultBus(); bus != nil {
+			reg.SetEventBus(bus)
+		}
 		// MCP 不在请求开始时全量注册；仅在模型通过 load_skill 明确使用某 Skill 时，将该 Skill 声明的 MCP 注册到当前上下文。
 		var mcpServers []tool.McpServerEntry
 		for _, srv := range cfg.Skills.MCPServers {
@@ -98,7 +102,11 @@ func NewSkillsAwareChatHandlerFromConfig(cfg config.Config, skillsIdx *skills.In
 			_ = tool.RegisterExecuteSkillScriptTool(reg, skillsIdx, cfg.Skills.AllowScriptExecution, scriptOpts)
 		}
 
-		react := agent.NewReActAgent(m, mem, reg, agent.WithReActMaxSteps(20))
+		reactOpts := []agent.ReActOption{agent.WithReActMaxSteps(20)}
+		if bus := events.DefaultBus(); bus != nil {
+			reactOpts = append(reactOpts, agent.WithReActEventBus(bus))
+		}
+		react := agent.NewReActAgent(m, mem, reg, reactOpts...)
 
 		sys := buildSkillsAwareSystemPrompt(skillsIdx)
 		llmReq := *req
@@ -111,6 +119,9 @@ func NewSkillsAwareChatHandlerFromConfig(cfg config.Config, skillsIdx *skills.In
 		}
 		if _, ok := llmReq.Metadata["agent_name"]; !ok {
 			llmReq.Metadata["agent_name"] = "chat-skills"
+		}
+		if llmReq.RequestID != "" {
+			ctx = context.WithValue(ctx, tool.ContextKeyRequestID, llmReq.RequestID)
 		}
 
 		return react.Run(ctx, &llmReq)

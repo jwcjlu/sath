@@ -116,6 +116,7 @@ func (a *ChatAgent) Run(ctx context.Context, req *Request) (*Response, error) {
 	}
 	messages = append(messages, req.Messages...)
 
+	emit(events.ModelInvoked, map[string]any{"message_count": len(messages)})
 	gen, err := a.model.Chat(ctx, messages)
 	if err != nil {
 		emit(events.RunError, map[string]any{"error": err.Error()})
