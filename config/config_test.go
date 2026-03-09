@@ -98,3 +98,68 @@ func TestLoadForEnv(t *testing.T) {
 		t.Fatalf("unexpected: %#v", cfg)
 	}
 }
+
+// TestLoad_Skills 验证 Skills 配置可正确解析（任务 1 验收）。
+func TestLoad_Skills(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "config.yaml")
+	content := `
+model: openai/gpt-4o
+max_history: 10
+skills:
+  skills_dirs: [skills, skills.d]
+  enabled_skills: [a, b]
+  disabled_skills: [c]
+  allow_script_execution: true
+  script_allowed_extensions: [.sh, .py]
+  script_timeout_seconds: 60
+  mcp_servers:
+    - id: mcp-k8s
+      endpoint: http://localhost:8080/mcp
+      backend: metoro
+`
+	if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
+		t.Fatalf("write file: %v", err)
+	}
+	cfg, err := Load(path)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if len(cfg.Skills.Dirs) != 2 || cfg.Skills.Dirs[0] != "skills" {
+		t.Fatalf("unexpected skills_dirs: %v", cfg.Skills.Dirs)
+	}
+	if len(cfg.Skills.EnabledSkills) != 2 || cfg.Skills.EnabledSkills[0] != "a" {
+		t.Fatalf("unexpected enabled_skills: %v", cfg.Skills.EnabledSkills)
+	}
+	if len(cfg.Skills.DisabledSkills) != 1 || cfg.Skills.DisabledSkills[0] != "c" {
+		t.Fatalf("unexpected disabled_skills: %v", cfg.Skills.DisabledSkills)
+	}
+	if !cfg.Skills.AllowScriptExecution {
+		t.Fatal("expected allow_script_execution true")
+	}
+	if len(cfg.Skills.ScriptAllowedExtensions) != 2 || cfg.Skills.ScriptAllowedExtensions[0] != ".sh" {
+		t.Fatalf("unexpected script_allowed_extensions: %v", cfg.Skills.ScriptAllowedExtensions)
+	}
+	if cfg.Skills.ScriptTimeoutSeconds != 60 {
+		t.Fatalf("expected script_timeout_seconds 60, got %d", cfg.Skills.ScriptTimeoutSeconds)
+	}
+	if len(cfg.Skills.MCPServers) != 1 || cfg.Skills.MCPServers[0].ID != "mcp-k8s" {
+		t.Fatalf("unexpected mcp_servers: %v", cfg.Skills.MCPServers)
+	}
+}
+
+// TestLoad_SkillsEmpty 未配置 Skills 时零值不影响（任务 1 验收）。
+func TestLoad_SkillsEmpty(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "config.yaml")
+	if err := os.WriteFile(path, []byte("model: openai/gpt-4o\nmax_history: 5"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	cfg, err := Load(path)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if cfg.Skills.Dirs != nil || cfg.Skills.EnabledSkills != nil || cfg.Skills.AllowScriptExecution != false {
+		t.Fatalf("expected zero value skills when not configured: %#v", cfg.Skills)
+	}
+}

@@ -45,12 +45,20 @@ func NewServeCommand() *cobra.Command {
 			}
 
 			var handler middleware.Handler
+			var dataHandler middleware.Handler
 			if cfg.ModelName != "" && len(cfg.Middlewares) >= 0 {
 				mwMap := templates.DefaultMiddlewareMap()
 				var err error
 				handler, err = templates.NewChatAgentHandlerFromConfig(cfg, mwMap)
 				if err != nil {
 					return fmt.Errorf("build handler from config: %w", err)
+				}
+				// 若配置了数据源，则尝试构建数据查询 Handler。
+				if len(cfg.DataSources) > 0 {
+					dataHandler, err = templates.NewDataQueryHandlerFromConfig(cfg, mwMap)
+					if err != nil {
+						return fmt.Errorf("build data query handler from config: %w", err)
+					}
 				}
 			} else {
 				m, err := model.NewOpenAIClient()
@@ -137,6 +145,76 @@ func NewServeCommand() *cobra.Command {
 			})
 			http.Handle("/metrics", obs.MetricsHandler())
 
+			// 数据查询 API：POST /data/chat
+			http.HandleFunc("/data/chat", func(w http.ResponseWriter, r *http.Request) {
+				if r.Method != http.MethodPost {
+					http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+					return
+				}
+				if dataHandler == nil {
+					http.Error(w, "data query handler not configured", http.StatusServiceUnavailable)
+					return
+				}
+				requestID := r.Header.Get("X-Request-ID")
+				if requestID == "" {
+					b := make([]byte, 8)
+					if _, err := rand.Read(b); err == nil {
+						requestID = hex.EncodeToString(b)
+					}
+				}
+				var body struct {
+					Message      string `json:"message"`
+					SessionID    string `json:"session_id"`
+					UserID       string `json:"user_id"`
+					DatasourceID string `json:"datasource_id"`
+				}
+				if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+					http.Error(w, errs.ErrBadRequest.Error(), http.StatusBadRequest)
+					return
+				}
+				req := &agent.Request{
+					Messages:  []model.Message{{Role: "user", Content: body.Message}},
+					RequestID: requestID,
+					Metadata: map[string]any{
+						"session_id":    body.SessionID,
+						"user_id":       body.UserID,
+						"datasource_id": body.DatasourceID,
+					},
+				}
+				if debug {
+					w.Header().Set("X-Request-ID", requestID)
+				}
+				resp, err := dataHandler(context.Background(), req)
+				if err != nil {
+					code, msg := http.StatusInternalServerError, errs.ErrInternal.Error()
+					if errors.Is(err, errs.ErrBadRequest) {
+						code, msg = http.StatusBadRequest, err.Error()
+					} else if errors.Is(err, errs.ErrRateLimited) {
+						code, msg = http.StatusTooManyRequests, err.Error()
+					} else if errors.Is(err, errs.ErrContentBlocked) {
+						code, msg = http.StatusUnprocessableEntity, err.Error()
+					} else {
+						msg = err.Error()
+					}
+					http.Error(w, msg, code)
+					return
+				}
+				w.Header().Set("Content-Type", "application/json")
+				out := map[string]any{"reply": resp.Text}
+				if debug {
+					out["request_id"] = requestID
+				}
+				if resp.Metadata != nil {
+					if v, ok := resp.Metadata["confirm_required"]; ok {
+						out["confirm_required"] = v
+					}
+					if v, ok := resp.Metadata["confirm_request"]; ok {
+						out["confirm_request"] = v
+					}
+				}
+				_ = json.NewEncoder(w).Encode(out)
+			})
+
 			ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 			defer stop()
 
@@ -146,7 +224,7 @@ func NewServeCommand() *cobra.Command {
 				_ = srv.Shutdown(context.Background())
 			}()
 
-			cmd.Printf("Listening on %s (POST /chat, GET /health, GET /metrics)\n", addr)
+			cmd.Printf("Listening on %s (POST /chat, POST /data/chat, GET /health, GET /metrics)\n", addr)
 			if debug {
 				cmd.Println("Debug mode: verbose logs and request_id in response")
 			}

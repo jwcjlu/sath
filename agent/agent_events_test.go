@@ -38,7 +38,7 @@ func TestChatAgent_Run_EmitsLifecycleEvents(t *testing.T) {
 	kinds := append([]events.Kind(nil), seen...)
 	mu.Unlock()
 
-	want := []events.Kind{events.RunStarted, events.ModelResponded, events.RunCompleted}
+	want := []events.Kind{events.RunStarted, events.ModelInvoked, events.ModelResponded, events.RunCompleted}
 	if len(kinds) != len(want) {
 		t.Fatalf("got %d events %v, want %v", len(kinds), kinds, want)
 	}

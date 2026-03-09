@@ -2,6 +2,7 @@ package templates
 
 import (
 	"context"
+	"strings"
 	"testing"
 	"time"
 
@@ -10,6 +11,7 @@ import (
 	"github.com/sath/memory"
 	"github.com/sath/middleware"
 	"github.com/sath/model"
+	"github.com/sath/skills"
 )
 
 type stubModel struct {
@@ -121,5 +123,39 @@ func TestNewChatAgentHandlerFromConfig_InvalidModel(t *testing.T) {
 	_, err := NewChatAgentHandlerFromConfig(cfg, DefaultMiddlewareMap())
 	if err == nil {
 		t.Fatal("expected error for invalid model name")
+	}
+}
+
+// TestBuildSkillsSummary 验证任务 7：Skills 摘要格式与数量限制。
+func TestBuildSkillsSummary(t *testing.T) {
+	empty := BuildSkillsSummary(nil, 8)
+	if empty != "" {
+		t.Fatalf("expected empty for nil skills, got %q", empty)
+	}
+	empty2 := BuildSkillsSummary([]skills.SkillMeta{}, 8)
+	if empty2 != "" {
+		t.Fatalf("expected empty for zero skills, got %q", empty2)
+	}
+
+	all := []skills.SkillMeta{
+		{Name: "skill-a", Description: "描述 A"},
+		{Name: "skill-b", Description: "描述 B"},
+	}
+	out := BuildSkillsSummary(all, 8)
+	if !strings.Contains(out, "【可用 Skills") || !strings.Contains(out, "load_skill") {
+		t.Fatalf("summary should contain header and load_skill hint: %s", out)
+	}
+	if !strings.Contains(out, "skill-a") || !strings.Contains(out, "描述 A") {
+		t.Fatalf("summary should list skill-a: %s", out)
+	}
+	// maxCount 2
+	out2 := BuildSkillsSummary(all, 2)
+	if !strings.Contains(out2, "skill-a") && !strings.Contains(out2, "skill-b") {
+		t.Fatalf("maxCount 2 should show both: %s", out2)
+	}
+	// maxCount <= 0 默认 8
+	out3 := BuildSkillsSummary(all, 0)
+	if out3 == "" {
+		t.Fatal("maxCount 0 should default and produce output")
 	}
 }

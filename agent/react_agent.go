@@ -3,6 +3,7 @@ package agent
 import (
 	"context"
 
+	"github.com/sath/events"
 	"github.com/sath/memory"
 	"github.com/sath/model"
 	"github.com/sath/tool"
@@ -21,12 +22,14 @@ type ReActAgent struct {
 	model    model.Model
 	mem      memory.Memory
 	tools    *tool.Registry
+	config   ReActConfig
 	maxSteps int
 }
 
 type ReActConfig struct {
 	MaxSteps   int
 	MaxHistory int
+	EventBus   *events.Bus // 可选；非空时在 Run 生命周期发布 RunStarted/RunCompleted/RunError
 }
 
 type ReActOption func(*ReActConfig)
@@ -47,6 +50,13 @@ func WithReActMaxHistory(n int) ReActOption {
 	}
 }
 
+// WithReActEventBus 设置 ReAct Run 生命周期事件总线；为 nil 时不发布事件，也可用 events.DefaultBus()。
+func WithReActEventBus(bus *events.Bus) ReActOption {
+	return func(c *ReActConfig) {
+		c.EventBus = bus
+	}
+}
+
 // NewReActAgent 创建一个 ReAct 风格的 Agent。
 // tools 允许为 nil，此时仅退化为普通对话 Agent。
 func NewReActAgent(m model.Model, mem memory.Memory, tools *tool.Registry, opts ...ReActOption) *ReActAgent {
@@ -61,6 +71,7 @@ func NewReActAgent(m model.Model, mem memory.Memory, tools *tool.Registry, opts 
 		model:    m,
 		mem:      mem,
 		tools:    tools,
+		config:   cfg,
 		maxSteps: cfg.MaxSteps,
 	}
 }
@@ -69,6 +80,22 @@ func (a *ReActAgent) Run(ctx context.Context, req *Request) (*Response, error) {
 	if req == nil {
 		return nil, nil
 	}
+
+	rid := requestID(req)
+	bus := a.config.EventBus
+	if bus == nil {
+		bus = events.DefaultBus()
+	}
+	emit := func(kind events.Kind, payload map[string]any) {
+		if bus == nil {
+			return
+		}
+		if payload == nil {
+			payload = make(map[string]any)
+		}
+		bus.Publish(ctx, events.Event{Kind: kind, Payload: payload, RequestID: rid})
+	}
+	emit(events.RunStarted, map[string]any{"message_count": len(req.Messages)})
 
 	// 读取历史对话
 	history, _ := a.mem.GetRecent(ctx, 10)
@@ -81,13 +108,16 @@ func (a *ReActAgent) Run(ctx context.Context, req *Request) (*Response, error) {
 	// 无工具或模型不支持 tools API 时退化为普通对话。
 	tm, ok := a.model.(ToolCallingModel)
 	if !ok || a.tools == nil {
+		emit(events.ModelInvoked, map[string]any{"message_count": len(messages)})
 		gen, err := a.model.Chat(ctx, messages)
 		if err != nil {
+			emit(events.RunError, map[string]any{"error": err.Error()})
 			return nil, err
 		}
 		_ = a.mem.Add(ctx, memory.Entry{
 			Message: model.Message{Role: "assistant", Content: gen.Text},
 		})
+		emit(events.RunCompleted, map[string]any{"text_length": len(gen.Text)})
 		return &Response{Text: gen.Text}, nil
 	}
 
@@ -101,10 +131,13 @@ func (a *ReActAgent) Run(ctx context.Context, req *Request) (*Response, error) {
 	//   4. 将新的回复作为 assistant 消息追加，并作为候选最终答案，为下一轮提供上下文。
 	var lastAnswer string
 	for step := 0; step < a.maxSteps; step++ {
+		emit(events.ModelInvoked, map[string]any{"message_count": len(messages), "step": step})
 		toolGen, err := tm.ChatWithTools(ctx, messages, a.tools)
 		if err != nil {
+			emit(events.RunError, map[string]any{"error": err.Error(), "step": step})
 			return nil, err
 		}
+		emit(events.ModelResponded, map[string]any{"text_length": len(toolGen.Text), "step": step})
 
 		stepInfo, _ := toolGen.Raw.(model.ToolStep)
 		// 未使用工具：认为模型已经有足够信息给出答案，进行一次「总结/最终回答」调用后结束。
@@ -120,11 +153,15 @@ func (a *ReActAgent) Run(ctx context.Context, req *Request) (*Response, error) {
 				Content: "请基于以上所有对话和工具结果，给出简洁明确的最终答案。如果已经给出了答案，则请复述该答案。",
 			})
 
+			emit(events.ModelInvoked, map[string]any{"message_count": len(messages), "step": step})
 			finalGen, err := a.model.Chat(ctx, messages)
 			if err != nil {
+				emit(events.RunError, map[string]any{"error": err.Error()})
 				return nil, err
 			}
+			emit(events.ModelResponded, map[string]any{"text_length": len(finalGen.Text), "step": step})
 			lastAnswer = finalGen.Text
+			emit(events.RunCompleted, map[string]any{"text_length": len(lastAnswer)})
 			break
 		}
 
@@ -134,10 +171,13 @@ func (a *ReActAgent) Run(ctx context.Context, req *Request) (*Response, error) {
 			Content: toolGen.Text,
 		})
 
+		emit(events.ModelInvoked, map[string]any{"message_count": len(messages), "step": step})
 		finalGen, err := a.model.Chat(ctx, messages)
 		if err != nil {
+			emit(events.RunError, map[string]any{"error": err.Error()})
 			return nil, err
 		}
+		emit(events.ModelResponded, map[string]any{"text_length": len(finalGen.Text), "step": step})
 		lastAnswer = finalGen.Text
 
 		// 将模型的回复加入对话，为下一轮提供上下文。
@@ -148,10 +188,12 @@ func (a *ReActAgent) Run(ctx context.Context, req *Request) (*Response, error) {
 	}
 
 	if lastAnswer == "" {
+		emit(events.RunCompleted, map[string]any{})
 		return &Response{Text: ""}, nil
 	}
 	_ = a.mem.Add(ctx, memory.Entry{
 		Message: model.Message{Role: "assistant", Content: lastAnswer},
 	})
+	emit(events.RunCompleted, map[string]any{"text_length": len(lastAnswer)})
 	return &Response{Text: lastAnswer}, nil
 }
