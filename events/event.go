@@ -21,6 +21,10 @@ const (
 	ToolInvoked Kind = "agent.tool.invoked"
 	// ToolExecuted 表示执行了一次工具调用（Execute 返回后），Payload 含 tool、input、output、失败时 error。
 	ToolExecuted Kind = "agent.tool.executed"
+	// HttpRequestInvoked 表示即将发起一次 HTTP 请求。
+	HttpRequestInvoked Kind = "http.request.invoked"
+	// HttpRequestCompleted 表示一次 HTTP 请求结束（成功或失败）。
+	HttpRequestCompleted Kind = "http.request.completed"
 	// RunCompleted 表示一次 Run 正常完成。
 	RunCompleted Kind = "agent.run.completed"
 	// RunError 表示 Run 过程中发生错误。
