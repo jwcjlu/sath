@@ -111,7 +111,6 @@ func (c *OpenAIClient) Chat(ctx context.Context, messages []Message, opts ...Opt
 		}
 		req.Messages = append(req.Messages, msg)
 	}
-
 	resp, err := c.client.CreateChatCompletion(ctx, req)
 	if err != nil {
 		return nil, err

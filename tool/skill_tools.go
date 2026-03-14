@@ -141,14 +141,16 @@ func defaultScriptAllowedExtensions(opts *ExecuteSkillScriptOptions) []string {
 	if opts != nil && len(opts.AllowedExtensions) > 0 {
 		return opts.AllowedExtensions
 	}
-	return []string{".sh"}
+	return []string{".sh", ".js", ".py"}
 }
 
-// scriptInterpreter 根据脚本扩展名返回解释器命令（.sh -> sh, .py -> python3）。
+// scriptInterpreter 根据脚本扩展名返回解释器命令（.sh -> sh, .py -> python, .js -> node）。
 func scriptInterpreter(ext string) string {
 	switch ext {
 	case ".py":
 		return "python"
+	case ".js":
+		return "node"
 	default:
 		return "sh"
 	}
@@ -180,7 +182,7 @@ func RegisterExecuteSkillScriptTool(reg *Registry, idx *skills.Index, allowScrip
 	timeout := defaultScriptTimeout(opts)
 	return reg.Register(Tool{
 		Name:        "execute_skill_script",
-		Description: "Execute a script bundled with a Skill (e.g. scripts/run.sh). Only available when script execution is enabled in config; path must be under the skill directory, typically under scripts/.",
+		Description: "Execute a script bundled with a Skill. Supports multiple runtimes: shell (.sh), Python (.py), Node.js (.js), etc.; allowed extensions are configured by the system (e.g. script_allowed_extensions). Path must be under the skill directory and must start with scripts/. Only available when script execution is enabled (skills.allow_script_execution).",
 		Parameters: map[string]any{
 			"type": "object",
 			"properties": map[string]any{
@@ -190,7 +192,11 @@ func RegisterExecuteSkillScriptTool(reg *Registry, idx *skills.Index, allowScrip
 				},
 				"path": map[string]any{
 					"type":        "string",
-					"description": "Relative path to script under the skill directory, e.g. scripts/run.sh.",
+					"description": "Relative path to script under the skill directory, e.g. scripts/run.sh, scripts/main.py, scripts/index.js. Must be under scripts/.",
+				},
+				"input": map[string]any{
+					"type":        "string",
+					"description": "Optional input to pass to the script via stdin (e.g. JSON string for Node/Python scripts that read from stdin).",
 				},
 			},
 			"required": []string{"name", "path"},
@@ -253,6 +259,9 @@ func RegisterExecuteSkillScriptTool(reg *Registry, idx *skills.Index, allowScrip
 			defer cancel()
 			cmd := exec.CommandContext(runCtx, interpreter, fullPath)
 			cmd.Dir = skillRoot
+			if inputStr, ok := params["input"].(string); ok && inputStr != "" {
+				cmd.Stdin = strings.NewReader(inputStr)
+			}
 			out, err := cmd.CombinedOutput()
 			if err != nil {
 				return string(out) + "\n" + err.Error(), nil

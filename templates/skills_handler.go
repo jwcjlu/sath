@@ -29,7 +29,10 @@ func BuildSkillsSummary(all []skills.SkillMeta, maxCount int) string {
 	}
 	var b strings.Builder
 	b.WriteString("【可用 Skills（按需加载）】\n")
-	b.WriteString("你可以按需加载以下技能以增强能力，通过调用 load_skill(name) 工具获取对应 SKILL.md 全文，然后在后续思考与工具调用中遵循其中的工作流与最佳实践。\n")
+	b.WriteString("你可以按需加载以下技能以增强能力：\n")
+	b.WriteString("- 使用 `load_skill` / `read_skill_file` / `execute_skill_script` 这三个工具与 Skills 交互。\n")
+	b.WriteString("- 列表中的 **Skill 名称只是参数，不是工具名称**，不要尝试直接调用它们作为工具。\n")
+	b.WriteString("当你需要使用某个 Skill 时，请先调用 `load_skill`，在阅读完整 SKILL.md 后，再按其中说明调用其它工具或继续推理。\n")
 	for _, m := range all {
 		desc := strings.TrimSpace(m.Description)
 		if desc == "" {
@@ -44,7 +47,11 @@ func BuildSkillsSummary(all []skills.SkillMeta, maxCount int) string {
 func buildSkillsAwareSystemPrompt(skillsIdx *skills.Index) string {
 	var b strings.Builder
 	b.WriteString("你是一个具备 Skills 能力的通用对话助手。\n")
-	b.WriteString("Skills 以 SKILL.md 文件的形式提供特定领域或任务的操作手册，你可以在需要时通过 load_skill 工具加载。\n\n")
+	b.WriteString("Skills 以 SKILL.md 文件的形式提供特定领域或任务的操作手册。\n")
+	b.WriteString("注意：Skill 的名称（如 mysql-employees-analysis）不是工具名，不能直接当作工具调用；你只能调用显式提供的工具，比如 `load_skill` / `read_skill_file` / `execute_skill_script`。\n")
+	b.WriteString("当你判断与某个 Skill 高度相关时，应先调用 `load_skill(name)` 获取该 Skill 的完整内容，并严格遵循其中给出的工作流与工具使用说明。\n")
+	b.WriteString("重要：当你缺少必要信息、无法访问外部系统或脚本执行被禁用时，不要凭空编造具体结果（例如版本号、数量、精确日志内容等）。此时应如实说明受限原因，可以给出一般性的排查建议，但必须明确这不是基于真实执行结果的结论。\n")
+	b.WriteString("关于脚本执行：不要事先假定「脚本执行已禁用」。仅当你实际调用了 `execute_skill_script` 且工具明确返回了脚本被禁用的错误信息时，才向用户说明需要开启 skills.allow_script_execution；未调用工具前不得提前给出此类结论。\n\n")
 
 	if skillsIdx != nil {
 		summary := BuildSkillsSummary(skillsIdx.All(), 8)
